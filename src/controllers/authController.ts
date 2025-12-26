@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { supabase } from '../config/supabase';
 import { hashPassword, comparePassword, generateToken } from '../utils/helpers';
 import { RegisterRequest, LoginRequest } from '../types';
-import { AuthenticatedRequest } from '../middleware/auth';
+import { AuthRequest as AuthenticatedRequest } from '../middleware/auth';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -26,7 +26,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
-    // Create user - ADD updated_at to the select
+    // Create user
     const { data: newUser, error } = await supabase
       .from('users')
       .insert([
@@ -149,7 +149,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response): Prom
     const { data: user, error } = await supabase
       .from('users')
       .select('user_id, name, email, role, phone_number, location, profile_picture, kyc_status, trust_score, account_status, created_at, updated_at')
-      .eq('user_id', req.user!.userId)
+      .eq('user_id', req.user!.id)  // Changed from userId to id
       .single();
 
     if (error || !user) {
@@ -189,7 +189,7 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
     const { data: updatedUser, error } = await supabase
       .from('users')
       .update(updateData)
-      .eq('user_id', req.user!.userId)
+      .eq('user_id', req.user!.id)  // Changed from userId to id
       .select('user_id, name, email, role, phone_number, location, profile_picture, kyc_status, trust_score, account_status, created_at, updated_at')
       .single();
 
@@ -223,7 +223,7 @@ export const logout = async (req: AuthenticatedRequest, res: Response): Promise<
     await supabase
       .from('users')
       .update({ last_active: new Date().toISOString() })
-      .eq('user_id', req.user!.userId);
+      .eq('user_id', req.user!.id);  // Changed from userId to id
 
     res.status(200).json({
       success: true,
