@@ -1,8 +1,12 @@
 // src/routes/admin-sellers.ts
-import express from 'express';
-import { Response } from 'express';
+import express from "express";
+import { Response } from "express";
 import { supabaseAdmin as supabase } from "../config/database";
-import { authenticateToken, AuthRequest, requireAdmin } from '../middleware/auth';
+import {
+  authenticateToken,
+  AuthRequest,
+  requireAdmin,
+} from "../middleware/auth";
 
 const router = express.Router();
 
@@ -14,7 +18,7 @@ const router = express.Router();
  * GET /api/admin/sellers
  * Get all approved sellers with pagination, search, and filters
  */
-router.get('/', async (req: AuthRequest, res: Response) => {
+router.get("/", async (req: AuthRequest, res: Response) => {
   try {
     const {
       page = 1,
@@ -22,16 +26,17 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       search,
       status,
       location,
-      sort = 'created_at',
-      order = 'desc'
+      sort = "created_at",
+      order = "desc",
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
 
     // Build query for sellers (users with role = 'seller' and kyc_status = 'verified')
     let query = supabase
-      .from('users')
-      .select(`
+      .from("users")
+      .select(
+        `
         user_id,
         name,
         email,
@@ -42,82 +47,92 @@ router.get('/', async (req: AuthRequest, res: Response) => {
         location_state,
         location_city,
         created_at
-      `, { count: 'exact' })
-      .eq('role', 'seller')
-      .eq('kyc_status', 'verified')
-      .order(sort as string, { ascending: order === 'asc' })
+      `,
+        { count: "exact" }
+      )
+      .eq("role", "seller")
+      .eq("kyc_status", "verified")
+      .order(sort as string, { ascending: order === "asc" })
       .range(offset, offset + Number(limit) - 1);
 
     // Apply filters
-    if (status && status !== 'all') {
-      query = query.eq('account_status', status);
+    if (status && status !== "all") {
+      query = query.eq("account_status", status);
     }
 
     if (location) {
-      query = query.ilike('location_state', `%${location}%`);
+      query = query.ilike("location_state", `%${location}%`);
     }
 
     if (search) {
-      query = query.or(`name.ilike.%${search}%,email.ilike.%${search}%,phone_number.ilike.%${search}%`);
+      query = query.or(
+        `name.ilike.%${search}%,email.ilike.%${search}%,phone_number.ilike.%${search}%`
+      );
     }
 
     const { data: sellers, error, count } = await query;
 
     if (error) {
-      console.error('Admin sellers fetch error:', error);
+      console.error("Admin sellers fetch error:", error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to fetch sellers',
-        error: error.message
+        message: "Failed to fetch sellers",
+        error: error.message,
       });
     }
 
     // Get product counts for each seller
-    const sellerIds = sellers?.map(s => s.user_id) || [];
-    
+    const sellerIds = sellers?.map((s) => s.user_id) || [];
+
     let productCounts: Record<string, number> = {};
-    
+
     if (sellerIds.length > 0) {
       const { data: products } = await supabase
-        .from('products')
-        .select('seller_id')
-        .in('seller_id', sellerIds);
+        .from("products")
+        .select("seller_id")
+        .in("seller_id", sellerIds);
 
       if (products) {
-        productCounts = products.reduce((acc: Record<string, number>, p: any) => {
-          acc[p.seller_id] = (acc[p.seller_id] || 0) + 1;
-          return acc;
-        }, {});
+        productCounts = products.reduce(
+          (acc: Record<string, number>, p: any) => {
+            acc[p.seller_id] = (acc[p.seller_id] || 0) + 1;
+            return acc;
+          },
+          {}
+        );
       }
     }
 
     // Format response
-    const formattedSellers = sellers?.map(seller => ({
-      id: seller.user_id,
-      name: seller.name,
-      email: seller.email,
-      phoneNumber: seller.phone_number,
-      status: seller.account_status === 'active' ? 'Active' : 'Suspended',
-      location: seller.location_state || '-',
-      regDate: new Date(seller.created_at).toLocaleDateString('en-US', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric'
-      }),
-      products: productCounts[seller.user_id] || 0
-    })) || [];
+    const formattedSellers =
+      sellers?.map((seller) => ({
+        id: seller.user_id,
+        name: seller.name,
+        email: seller.email,
+        phoneNumber: seller.phone_number,
+        status: seller.account_status === "active" ? "Active" : "Suspended",
+        location: seller.location_state || "-",
+        regDate: new Date(seller.created_at).toLocaleDateString("en-US", {
+          month: "short",
+          day: "2-digit",
+          year: "numeric",
+        }),
+        products: productCounts[seller.user_id] || 0,
+      })) || [];
 
     // Get summary stats
     const { data: allSellers } = await supabase
-      .from('users')
-      .select('account_status')
-      .eq('role', 'seller')
-      .eq('kyc_status', 'verified');
+      .from("users")
+      .select("account_status")
+      .eq("role", "seller")
+      .eq("kyc_status", "verified");
 
     const summary = {
       total: allSellers?.length || 0,
-      active: allSellers?.filter(s => s.account_status === 'active').length || 0,
-      suspended: allSellers?.filter(s => s.account_status === 'suspended').length || 0
+      active:
+        allSellers?.filter((s) => s.account_status === "active").length || 0,
+      suspended:
+        allSellers?.filter((s) => s.account_status === "suspended").length || 0,
     };
 
     res.json({
@@ -128,37 +143,38 @@ router.get('/', async (req: AuthRequest, res: Response) => {
           page: Number(page),
           limit: Number(limit),
           total: count || 0,
-          pages: Math.ceil((count || 0) / Number(limit))
+          pages: Math.ceil((count || 0) / Number(limit)),
         },
-        summary
-      }
+        summary,
+      },
     });
-
   } catch (error) {
-    console.error('Admin sellers error:', error);
+    console.error("Admin sellers error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 });
 
 /**
  * GET /api/admin/sellers/:id
- * Get single seller details
+ * Get single seller details - works for any user with seller role or KYC application
  */
-router.get('/:id', async (req: AuthRequest, res: Response) => {
+router.get("/:id", async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Get seller
-    const { data: seller, error } = await supabase
-      .from('users')
-      .select(`
+    // Get user - don't require role = seller initially (they might be in KYC process)
+    const { data: user, error } = await supabase
+      .from("users")
+      .select(
+        `
         user_id,
         name,
         email,
         phone_number,
+        profile_picture,
         role,
         account_status,
         kyc_status,
@@ -167,95 +183,207 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
         location_area,
         created_at,
         updated_at
-      `)
-      .eq('user_id', id)
-      .eq('role', 'seller')
+      `
+      )
+      .eq("user_id", id)
       .single();
 
-    if (error || !seller) {
+    if (error || !user) {
       return res.status(404).json({
         success: false,
-        message: 'Seller not found'
+        message: "User not found",
       });
     }
 
-    // Get seller profile
+    // Get seller profile if exists
     const { data: profile } = await supabase
-      .from('seller_profiles')
-      .select('*')
-      .eq('user_id', id)
+      .from("seller_profiles")
+      .select("*")
+      .eq("user_id", id)
       .single();
 
     // Get product count
-    const { count: productCount } = await supabase
-      .from('products')
-      .select('*', { count: 'exact', head: true })
-      .eq('seller_id', id);
+    let productCount = 0;
+    const { count } = await supabase
+      .from("products")
+      .select("*", { count: "exact", head: true })
+      .eq("seller_id", id);
+    productCount = count || 0;
 
-    // Get KYC application details
+    // Get KYC application details (most recent)
     const { data: kycApplication } = await supabase
-      .from('kyc_applications')
-      .select('*')
-      .eq('user_id', id)
-      .order('created_at', { ascending: false })
+      .from("kyc_applications")
+      .select("*")
+      .eq("user_id", id)
+      .order("created_at", { ascending: false })
       .limit(1)
       .single();
 
-    // Get KYC documents
-    let documents: any[] = [];
-    if (kycApplication) {
-      const { data: docs } = await supabase
-        .from('kyc_documents')
-        .select('*')
-        .eq('application_id', kycApplication.application_id);
-      documents = docs || [];
+    // Get KYC documents from kyc_documents table (using user_id)
+    const { data: kycDocuments } = await supabase
+      .from("kyc_documents")
+      .select("document_type, file_url, file_name, uploaded_at, file_size")
+      .eq("user_id", id);
+
+    console.log("KYC Documents found for user:", id, kycDocuments);
+
+    // Map documents by type for easy lookup
+    const documentUrls: Record<
+      string,
+      { url: string; uploadedAt: string; size: number | null }
+    > = {};
+    if (kycDocuments) {
+      kycDocuments.forEach((doc: any) => {
+        documentUrls[doc.document_type] = {
+          url: doc.file_url,
+          uploadedAt: doc.uploaded_at,
+          size: doc.file_size,
+        };
+      });
+    }
+
+    console.log("Document URLs mapped:", documentUrls);
+
+    // Build name - prioritize user.name, fallback to profile or KYC
+    const userName =
+      user.name ||
+      (kycApplication?.first_name && kycApplication?.last_name
+        ? `${kycApplication.first_name} ${kycApplication.last_name}`
+        : null) ||
+      profile?.store_name ||
+      "Unknown";
+
+    // Split name into first/last
+    const nameParts = userName.split(" ");
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+
+    // Format documents for frontend - from kyc_documents table
+    const formattedDocuments: any[] = [];
+    const uploadDate =
+      kycApplication?.submitted_at ||
+      kycApplication?.created_at ||
+      user.created_at;
+
+    if (documentUrls["id_card"]) {
+      formattedDocuments.push({
+        id: "id_card",
+        name: `ID Card (${kycApplication?.identity_type || "National ID"})`,
+        type: documentUrls["id_card"].url.toLowerCase().endsWith(".pdf")
+          ? "pdf"
+          : "image",
+        url: documentUrls["id_card"].url,
+        size: documentUrls["id_card"].size,
+        uploadedAt: documentUrls["id_card"].uploadedAt || uploadDate,
+        status: "uploaded",
+      });
+    }
+
+    if (documentUrls["selfie"]) {
+      formattedDocuments.push({
+        id: "selfie",
+        name: "Personal Photo/Selfie",
+        type: "image",
+        url: documentUrls["selfie"].url,
+        size: documentUrls["selfie"].size,
+        uploadedAt: documentUrls["selfie"].uploadedAt || uploadDate,
+        status: "uploaded",
+      });
+    }
+
+    if (documentUrls["business_cert"]) {
+      formattedDocuments.push({
+        id: "cac",
+        name: "Business Certificate (CAC)",
+        type: documentUrls["business_cert"].url.toLowerCase().endsWith(".pdf")
+          ? "pdf"
+          : "image",
+        url: documentUrls["business_cert"].url,
+        size: documentUrls["business_cert"].size,
+        uploadedAt: documentUrls["business_cert"].uploadedAt || uploadDate,
+        status: "uploaded",
+      });
+    }
+
+    if (documentUrls["store_logo"]) {
+      formattedDocuments.push({
+        id: "store_logo",
+        name: "Store Logo",
+        type: "image",
+        url: documentUrls["store_logo"].url,
+        size: documentUrls["store_logo"].size,
+        uploadedAt: documentUrls["store_logo"].uploadedAt || uploadDate,
+        status: "uploaded",
+      });
     }
 
     res.json({
       success: true,
       data: {
         seller: {
-          id: seller.user_id,
-          firstName: seller.name?.split(' ')[0] || '',
-          lastName: seller.name?.split(' ').slice(1).join(' ') || '',
-          email: seller.email,
-          phoneNumber: seller.phone_number,
-          countryCode: '+234',
-          status: seller.account_status === 'active' ? 'Active' : 'Suspended',
+          id: user.user_id,
+          firstName: firstName,
+          lastName: lastName,
+          name: userName,
+          email: user.email || "",
+          phoneNumber: user.phone_number || "",
+          avatar: user.profile_picture,
+          countryCode: "+234",
+          status:
+            user.account_status === "active"
+              ? "Active"
+              : user.account_status === "suspended"
+              ? "Suspended"
+              : "Active",
+          kycStatus: user.kyc_status || kycApplication?.status || "not_started",
           location: {
-            state: seller.location_state,
-            city: seller.location_city,
-            area: seller.location_area
+            state: user.location_state || kycApplication?.identity_state || "",
+            city: user.location_city || "",
+            area: user.location_area || kycApplication?.identity_lga || "",
           },
-          address: kycApplication?.address || '',
-          identityNumber: kycApplication?.id_number || '',
-          businessName: profile?.business_name || '',
-          businessAddress: profile?.store_address || '',
-          businessIdentityNumber: profile?.business_registration_number || '',
-          regDate: seller.created_at,
-          products: productCount || 0
+          address: kycApplication?.identity_address || "",
+          identityType: kycApplication?.identity_type || "",
+          identityNumber: kycApplication?.identity_number || "",
+          businessName: kycApplication?.store_name || profile?.store_name || "",
+          businessAddress:
+            kycApplication?.store_address || profile?.store_address || "",
+          businessIdentityNumber:
+            kycApplication?.business_id ||
+            profile?.business_registration_number ||
+            "",
+          regDate: user.created_at,
+          products: productCount,
         },
-        documents: documents.map(doc => ({
-          id: doc.document_id,
-          name: doc.document_type === 'id_card' ? 'ID card (National ID card)' :
-                doc.document_type === 'selfie' ? 'Personal photo/Selfie' :
-                doc.document_type === 'business_cert' ? 'Business document (CAC)' :
-                doc.document_type,
-          type: doc.file_type?.includes('pdf') ? 'pdf' : 'image',
-          url: doc.file_url,
-          size: doc.file_size,
-          uploadedAt: doc.created_at,
-          status: doc.verification_status
-        })),
-        kycApplication
-      }
+        documents: formattedDocuments,
+        kycApplication: kycApplication
+          ? {
+              application_id: kycApplication.application_id,
+              status: kycApplication.status,
+              identity_type: kycApplication.identity_type,
+              identity_number: kycApplication.identity_number,
+              identity_state: kycApplication.identity_state,
+              identity_lga: kycApplication.identity_lga,
+              identity_address: kycApplication.identity_address,
+              store_name: kycApplication.store_name,
+              store_address: kycApplication.store_address,
+              business_id: kycApplication.business_id,
+              // Document URLs from kyc_documents table
+              identity_document_url: documentUrls["id_card"]?.url || null,
+              selfie_url: documentUrls["selfie"]?.url || null,
+              business_document_url: documentUrls["business_cert"]?.url || null,
+              store_logo_url: documentUrls["store_logo"]?.url || null,
+              submitted_at: kycApplication.submitted_at,
+              reviewed_at: kycApplication.reviewed_at,
+              rejection_reason: kycApplication.rejection_reason,
+            }
+          : null,
+      },
     });
-
   } catch (error) {
-    console.error('Admin seller details error:', error);
+    console.error("Admin seller details error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 });
@@ -264,65 +392,64 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
  * PUT /api/admin/sellers/:id/suspend
  * Suspend a seller
  */
-router.put('/:id/suspend', async (req: AuthRequest, res: Response) => {
+router.put("/:id/suspend", async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
 
     // Get current seller
     const { data: seller, error: fetchError } = await supabase
-      .from('users')
-      .select('user_id, name, email, account_status')
-      .eq('user_id', id)
-      .eq('role', 'seller')
+      .from("users")
+      .select("user_id, name, email, account_status")
+      .eq("user_id", id)
+      .eq("role", "seller")
       .single();
 
     if (fetchError || !seller) {
       return res.status(404).json({
         success: false,
-        message: 'Seller not found'
+        message: "Seller not found",
       });
     }
 
-    if (seller.account_status === 'suspended') {
+    if (seller.account_status === "suspended") {
       return res.status(400).json({
         success: false,
-        message: 'Seller is already suspended'
+        message: "Seller is already suspended",
       });
     }
 
     // Update seller status
     const { error: updateError } = await supabase
-      .from('users')
+      .from("users")
       .update({
-        account_status: 'suspended',
-        updated_at: new Date().toISOString()
+        account_status: "suspended",
+        updated_at: new Date().toISOString(),
       })
-      .eq('user_id', id);
+      .eq("user_id", id);
 
     if (updateError) {
-      console.error('Suspend error:', updateError);
+      console.error("Suspend error:", updateError);
       return res.status(500).json({
         success: false,
-        message: 'Failed to suspend seller'
+        message: "Failed to suspend seller",
       });
     }
 
     res.json({
       success: true,
-      message: 'Seller suspended successfully',
+      message: "Seller suspended successfully",
       data: {
         sellerId: id,
         sellerName: seller.name,
-        newStatus: 'suspended'
-      }
+        newStatus: "suspended",
+      },
     });
-
   } catch (error) {
-    console.error('Admin suspend error:', error);
+    console.error("Admin suspend error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 });
@@ -331,64 +458,63 @@ router.put('/:id/suspend', async (req: AuthRequest, res: Response) => {
  * PUT /api/admin/sellers/:id/unsuspend
  * Reactivate a suspended seller
  */
-router.put('/:id/unsuspend', async (req: AuthRequest, res: Response) => {
+router.put("/:id/unsuspend", async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
     // Get current seller
     const { data: seller, error: fetchError } = await supabase
-      .from('users')
-      .select('user_id, name, email, account_status')
-      .eq('user_id', id)
-      .eq('role', 'seller')
+      .from("users")
+      .select("user_id, name, email, account_status")
+      .eq("user_id", id)
+      .eq("role", "seller")
       .single();
 
     if (fetchError || !seller) {
       return res.status(404).json({
         success: false,
-        message: 'Seller not found'
+        message: "Seller not found",
       });
     }
 
-    if (seller.account_status === 'active') {
+    if (seller.account_status === "active") {
       return res.status(400).json({
         success: false,
-        message: 'Seller is already active'
+        message: "Seller is already active",
       });
     }
 
     // Update seller status
     const { error: updateError } = await supabase
-      .from('users')
+      .from("users")
       .update({
-        account_status: 'active',
-        updated_at: new Date().toISOString()
+        account_status: "active",
+        updated_at: new Date().toISOString(),
       })
-      .eq('user_id', id);
+      .eq("user_id", id);
 
     if (updateError) {
-      console.error('Unsuspend error:', updateError);
+      console.error("Unsuspend error:", updateError);
       return res.status(500).json({
         success: false,
-        message: 'Failed to reactivate seller'
+        message: "Failed to reactivate seller",
       });
     }
 
     res.json({
       success: true,
-      message: 'Seller reactivated successfully',
+      message: "Seller reactivated successfully",
       data: {
         sellerId: id,
         sellerName: seller.name,
-        newStatus: 'active'
-      }
+        newStatus: "active",
+      },
     });
-
   } catch (error) {
-    console.error('Admin unsuspend error:', error);
+    console.error("Admin unsuspend error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 });
