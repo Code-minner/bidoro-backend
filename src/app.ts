@@ -17,6 +17,7 @@ import productRoutes from './routes/products';
 import productUploadRoutes from './routes/productUpload';
 import productDraftRoutes from './routes/productDrafts'; 
 import adminSellersRoutes from './routes/admin-sellers';
+import messagesRouter from './routes/messages';
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -68,6 +69,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/products', productUploadRoutes);
 app.use('/api/products', productDraftRoutes); 
 app.use('/api/admin/sellers', adminSellersRoutes);
+app.use('/api/messages', messagesRouter);
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
