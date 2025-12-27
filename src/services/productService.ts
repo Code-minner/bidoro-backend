@@ -233,11 +233,11 @@ export class ProductService {
       .from("products")
       .select(
         `
-        *,
-        categories(name, slug, type),
-        product_images(image_url, is_primary, display_order),
-        product_verifications(status, verified_at)
-      `
+      *,
+      categories(name, slug, type),
+      product_images(image_url, is_primary, display_order),
+      seller:users!seller_id(user_id, name, profile_picture, trust_score, kyc_status, created_at)
+    `
       )
       .eq("product_id", productId)
       .single();

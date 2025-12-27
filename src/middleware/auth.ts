@@ -267,4 +267,6 @@ export const requireVerifiedSeller = (req: AuthRequest, res: Response, next: Nex
   next();
 };
 
+
+
 export const requireAdmin = requireRole(['admin']);

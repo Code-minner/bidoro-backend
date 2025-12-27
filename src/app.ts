@@ -17,7 +17,14 @@ import productRoutes from './routes/products';
 import productUploadRoutes from './routes/productUpload';
 import productDraftRoutes from './routes/productDrafts'; 
 import adminSellersRoutes from './routes/admin-sellers';
+<<<<<<< HEAD
 import messagesRouter from './routes/messages';
+=======
+import adminCustomerRoutes from './routes/admin-customers';
+import sellerRoutes from './routes/seller';
+import buyerRoutes from "./routes/buyer";
+
+>>>>>>> 245d2f27c3faebd9f6076aa814590d2bcd5b5f95
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -69,7 +76,14 @@ app.use('/api/products', productRoutes);
 app.use('/api/products', productUploadRoutes);
 app.use('/api/products', productDraftRoutes); 
 app.use('/api/admin/sellers', adminSellersRoutes);
+<<<<<<< HEAD
 app.use('/api/messages', messagesRouter);
+=======
+app.use('/api/admin', adminCustomerRoutes);
+app.use('/api/seller', sellerRoutes);
+app.use("/api/buyer", buyerRoutes);
+
+>>>>>>> 245d2f27c3faebd9f6076aa814590d2bcd5b5f95
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -89,11 +103,15 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Bidoro Backend running on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth`);
-  console.log(`📍 Location endpoints: http://localhost:${PORT}/api/locations`);
-});
+// Only listen in local development (not on Vercel)
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🚀 Bidoro Backend running on port ${PORT}`);
+    console.log(`📍 Health check: http://localhost:${PORT}/health`);
+    console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth`);
+    console.log(`📍 Location endpoints: http://localhost:${PORT}/api/locations`);
+  });
+}
 
+// Export for Vercel
 export default app;

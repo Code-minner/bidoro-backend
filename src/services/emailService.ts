@@ -7,6 +7,18 @@ interface EmailVerificationData {
   verificationCode: string;
 }
 
+// Add these interfaces at the top
+interface PasswordResetData {
+  name: string;
+  email: string;
+  resetCode: string;
+}
+
+interface PasswordChangedData {
+  name: string;
+  email: string;
+}
+
 class EmailService {
   private transporter: nodemailer.Transporter;
 
@@ -693,6 +705,266 @@ class EmailService {
           }
         </div>
         <p>Please review this application in the admin panel.</p>
+      </body>
+    </html>
+  `;
+  }
+
+  // Add these methods to the EmailService class
+
+  async sendPasswordResetEmail(data: PasswordResetData): Promise<boolean> {
+    try {
+      const { name, email, resetCode } = data;
+
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: email,
+        subject: "Reset Your Password - BIDORO 🔐",
+        html: this.getPasswordResetTemplate(name, resetCode),
+        text: `Hi ${name},\n\nYour password reset code is: ${resetCode}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this, please ignore this email.\n\nBest regards,\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(
+        "✅ Password reset email sent successfully:",
+        result.messageId
+      );
+
+      if (process.env.NODE_ENV === "development") {
+        console.log(`📧 Password reset email sent to: ${email}`);
+        console.log(`🔢 Reset code: ${resetCode}`);
+      }
+
+      return true;
+    } catch (error: any) {
+      console.error("❌ Password reset email sending failed:", error.message);
+      return false;
+    }
+  }
+
+  private getPasswordResetTemplate(name: string, resetCode: string): string {
+    return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reset Your Password - BIDORO</title>
+      </head>
+      <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 2px solid #1C341A; border-radius: 20px; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 0; background-color: #f1f6faff;">
+        
+        <!-- Header with Logo -->
+        <div style="text-align: center; padding: 40px 20px; border-radius: 16px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); margin: 0;">
+          <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
+               alt="BIDORO Logo" 
+               style="width: 200px; height: auto; margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;"
+               onerror="this.style.display='none'">
+          
+          <h1 style="color: #1C341A; margin: 0; font-size: 36px; font-weight: bold;">
+            Reset Your <span style="color: #DEE563;">Password</span>
+          </h1>
+          <p style="color: #1C341A; margin: 15px 0 0 0; font-size: 18px;">
+            Secure your BIDORO account 🔐
+          </p>
+        </div>
+
+        <!-- Main Content Card -->
+        <div style="background: white; margin: 0; padding: 40px 30px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
+          
+          <!-- Personal Greeting -->
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h2 style="color: #1C341A; margin: 0; font-size: 28px;">
+              Hi${name ? ` ${name}` : ""}! 👋
+            </h2>
+            <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">
+              We received a request to reset your password
+            </p>
+          </div>
+
+          <!-- Info Message -->
+          <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border-left: 4px solid #DEE563;">
+            <p style="font-size: 16px; margin: 0; color: #333; line-height: 1.6;">
+              Use the code below to reset your password. If you didn't request this, you can safely ignore this email.
+            </p>
+          </div>
+
+          <!-- Reset Code Section -->
+          <div style="text-align: center; margin: 35px 0;">
+            <h3 style="color: #1C341A; margin: 0 0 20px 0; font-size: 22px;">
+              🔑 Your Reset Code
+            </h3>
+            
+            <!-- Code Display -->
+            <div style="border: 3px solid #1C341A; padding: 30px; border-radius: 15px; margin: 20px 0; box-shadow: 0 8px 20px rgba(28, 52, 26, 0.2);">
+              <div style="font-size: 48px; font-weight: bold; color: #1C341A; letter-spacing: 12px; font-family: 'Courier New', monospace; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">
+                ${resetCode}
+              </div>
+              <p style="margin: 15px 0 0 0; color: #1C341A; font-size: 14px; font-weight: 600;">
+                Enter this code to reset your password
+              </p>
+            </div>
+          </div>
+
+          <!-- Instructions -->
+          <div style="margin: 35px 0;">
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 12px; border-left: 4px solid #DEE563;">
+              <h4 style="color: #1C341A; margin: 0 0 15px 0; font-size: 18px;">📋 How to reset:</h4>
+              <ol style="margin: 0; padding-left: 20px; color: #333; line-height: 1.6;">
+                <li style="margin-bottom: 8px;">Return to the password reset page on BIDORO</li>
+                <li style="margin-bottom: 8px;">Enter the 4-digit code shown above</li>
+                <li style="margin-bottom: 8px;">Create your new password</li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- Security Warning -->
+          <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 2px solid #ffc107; padding: 20px; border-radius: 12px; margin: 30px 0;">
+            <div style="display: flex; align-items: center; margin-bottom: 10px;">
+              <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
+              <strong style="color: #856404; font-size: 16px;">Important Security Notice</strong>
+            </div>
+            <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+              This reset code will expire in <strong>10 minutes</strong> for your security. If you didn't request a password reset, please ignore this email and your password will remain unchanged.
+            </p>
+          </div>
+
+          <!-- Support Section -->
+          <div style="text-align: center; margin: 35px 0; padding: 20px; background: #f8f9fa; border-radius: 12px;">
+            <p style="margin: 0; color: #666; font-size: 14px;">
+              Need help? We're here for you! 💬
+            </p>
+            <p style="margin: 5px 0 0 0; color: #1C341A; font-size: 14px;">
+              <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
+            </p>
+          </div>
+
+          <!-- Personal Touch -->
+          <div style="border-top: 2px solid #DEE563; padding-top: 25px; margin-top: 35px;">
+            <p style="font-size: 16px; color: #333; margin: 0 0 15px 0; line-height: 1.6;">
+              Stay safe and secure on BIDORO!
+            </p>
+            <p style="font-size: 16px; color: #1C341A; margin: 0; font-weight: 600;">
+              — The BIDORO Team 🛡️
+            </p>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align: center; padding: 30px 20px; background: #f8f9fa; color: #666;">
+          <p style="margin: 0 0 10px 0; font-size: 14px;">
+            This is an automated security email. Please do not reply to this message.
+          </p>
+          <p style="margin: 0 0 15px 0; font-size: 14px;">
+            Questions? Contact us at <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
+          </p>
+          <p style="margin: 0; font-size: 12px; color: #999;">
+            © 2025 BIDORO. All rights reserved.
+          </p>
+        </div>
+
+      </body>
+    </html>
+  `;
+  }
+
+  async sendPasswordChangedEmail(data: PasswordChangedData): Promise<boolean> {
+    try {
+      const { name, email } = data;
+
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: email,
+        subject: "Password Changed Successfully - BIDORO ✅",
+        html: this.getPasswordChangedTemplate(name),
+        text: `Hi ${name},\n\nYour password has been changed successfully.\n\nIf you didn't make this change, please contact us immediately at hello@bidoro.africa.\n\nBest regards,\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(
+        "✅ Password changed email sent successfully:",
+        result.messageId
+      );
+      return true;
+    } catch (error: any) {
+      console.error("❌ Password changed email sending failed:", error.message);
+      return false;
+    }
+  }
+
+  private getPasswordChangedTemplate(name: string): string {
+    return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Password Changed - BIDORO</title>
+      </head>
+      <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 2px solid #1C341A; border-radius: 20px; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 0; background-color: #f1f6faff;">
+        
+        <!-- Header -->
+        <div style="text-align: center; padding: 40px 20px; border-radius: 16px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); margin: 0;">
+          <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
+               alt="BIDORO Logo" 
+               style="width: 200px; height: auto; margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;">
+          
+          <h1 style="color: #1C341A; margin: 0; font-size: 36px; font-weight: bold;">
+            Password <span style="color: #DEE563;">Changed</span>
+          </h1>
+        </div>
+
+        <!-- Main Content -->
+        <div style="background: white; margin: 0; padding: 40px 30px;">
+          
+          <div style="text-align: center; margin-bottom: 30px;">
+            <div style="display: inline-block; width: 60px; height: 60px; background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); border-radius: 50%; margin-bottom: 20px;">
+              <span style="display: block; padding-top: 15px; color: white; font-size: 30px;">✓</span>
+            </div>
+            <h2 style="color: #1C341A; margin: 0; font-size: 28px;">
+              Hi${name ? ` ${name}` : ""}!
+            </h2>
+            <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">
+              Your password has been changed successfully
+            </p>
+          </div>
+
+          <div style="background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border-left: 4px solid #16a34a;">
+            <p style="font-size: 16px; margin: 0; color: #166534; line-height: 1.6;">
+              Your BIDORO account password was updated successfully. You can now log in with your new password.
+            </p>
+          </div>
+
+          <!-- Security Warning -->
+          <div style="background: #fef2f2; border: 2px solid #fecaca; padding: 20px; border-radius: 12px; margin: 30px 0;">
+            <div style="display: flex; align-items: center; margin-bottom: 10px;">
+              <span style="font-size: 24px; margin-right: 10px;">🚨</span>
+              <strong style="color: #dc2626; font-size: 16px;">Didn't make this change?</strong>
+            </div>
+            <p style="margin: 0; color: #991b1b; font-size: 14px; line-height: 1.5;">
+              If you didn't change your password, please contact us immediately at <a href="mailto:hello@bidoro.africa" style="color: #dc2626; font-weight: 600;">hello@bidoro.africa</a> to secure your account.
+            </p>
+          </div>
+
+          <div style="border-top: 2px solid #DEE563; padding-top: 25px; margin-top: 35px;">
+            <p style="font-size: 16px; color: #1C341A; margin: 0; font-weight: 600;">
+              — The BIDORO Team 🛡️
+            </p>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align: center; padding: 30px 20px; background: #f8f9fa; color: #666;">
+          <p style="margin: 0; font-size: 12px; color: #999;">
+            © 2025 BIDORO. All rights reserved.
+          </p>
+        </div>
+
       </body>
     </html>
   `;
