@@ -123,27 +123,54 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
 // ================================================
 // GET OR CREATE CONVERSATION
 // ================================================
+// ================================================
+// GET OR CREATE CONVERSATION - FIXED
+// ================================================
 router.post('/conversations/get-or-create', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
     const { otherUserId, productId } = req.body;
 
-    if (!otherUserId || !productId) {
+    console.log('Get or create conversation request:', {
+      currentUserId,
+      otherUserId,
+      productId
+    });
+
+    if (!otherUserId) {
       return res.status(400).json({
         success: false,
-        message: 'otherUserId and productId are required'
+        message: 'otherUserId is required'
       });
     }
 
-    // Determine who is buyer and who is seller
-    const { data: existingConv } = await supabase
+    // Use NULL if productId is not provided (for general inquiries)
+    const validProductId = productId || null;
+
+    // Check if conversation already exists
+    let query = supabase
       .from('conversations')
-      .select('conversation_id')
-      .or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.eq.${productId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.eq.${productId})`)
+      .select('conversation_id');
+    
+    // Build query based on whether productId is provided
+    if (validProductId) {
+      query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.eq.${validProductId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.eq.${validProductId})`);
+    } else {
+      // For general inquiries (no product), find conversation between users with null product_id
+      query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.is.null),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.is.null)`);
+    }
+    
+    const { data: existingConv, error: searchError } = await query
       .limit(1)
-      .single();
+      .maybeSingle(); // Use maybeSingle() instead of single() to avoid error when not found
+
+    if (searchError) {
+      console.error('Error searching for conversation:', searchError);
+      throw searchError;
+    }
 
     if (existingConv) {
+      console.log('Found existing conversation:', existingConv.conversation_id);
       return res.json({
         success: true,
         data: { conversationId: existingConv.conversation_id }
@@ -151,13 +178,16 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
     }
 
     // Create new conversation
-    const { data: newConv, error } = await supabase
+    const conversationId = uuidv4();
+    console.log('Creating new conversation:', conversationId);
+
+    const { data: newConv, error: createError } = await supabase
       .from('conversations')
       .insert({
-        conversation_id: uuidv4(),
+        conversation_id: conversationId,
         buyer_id: currentUserId,
         seller_id: otherUserId,
-        product_id: productId,
+        product_id: validProductId,
         status: 'active',
         unread_count_buyer: 0,
         unread_count_seller: 0,
@@ -167,18 +197,24 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       .select('conversation_id')
       .single();
 
-    if (error) throw error;
+    if (createError) {
+      console.error('Error creating conversation:', createError);
+      throw createError;
+    }
+
+    console.log('Created new conversation:', newConv.conversation_id);
 
     res.json({
       success: true,
       data: { conversationId: newConv.conversation_id }
     });
   } catch (error: any) {
-    console.error('Error creating conversation:', error);
+    console.error('Error in get-or-create conversation:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to create conversation',
-      error: error.message
+      error: error.message,
+      details: error.details || error.hint
     });
   }
 });
