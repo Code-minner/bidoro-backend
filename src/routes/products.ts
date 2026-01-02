@@ -135,22 +135,84 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /api/products/:id
- * Get single product by ID
+ * Get single product by ID with seller store info
  */
 router.get('/:id', async (req, res) => {
   try {
-    const product = await productService.getProductById(req.params.id);
-    
-    if (!product) {
+    const { id } = req.params;
+
+    // Get product with basic info
+    const { data: product, error } = await supabase
+      .from('products')
+      .select(`
+        *,
+        categories(name, slug),
+        product_images(image_url, is_primary, display_order)
+      `)
+      .eq('product_id', id)
+      .single();
+
+    if (error || !product) {
+      console.error('Product query error:', error);
       return res.status(404).json({
         success: false,
         error: 'Product not found'
       });
     }
 
+    // Get seller info separately
+    const { data: sellerData } = await supabase
+      .from('users')
+      .select('user_id, name, profile_picture, trust_score, kyc_status, created_at, location_state, location_city')
+      .eq('user_id', product.seller_id)
+      .single();
+
+    // Get seller's store name from kyc_applications
+    let storeName = null;
+    if (product.seller_id) {
+      const { data: kycApp } = await supabase
+        .from('kyc_applications')
+        .select('store_name')
+        .eq('user_id', product.seller_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      storeName = kycApp?.store_name || null;
+    }
+
+    // Get seller's store logo from kyc_documents
+    let storeLogo = null;
+    if (product.seller_id) {
+      const { data: logoDoc } = await supabase
+        .from('kyc_documents')
+        .select('file_url')
+        .eq('user_id', product.seller_id)
+        .eq('document_type', 'store_logo')
+        .single();
+      
+      storeLogo = logoDoc?.file_url || null;
+    }
+
+    // Build seller object with store info
+    const seller = sellerData ? {
+      ...sellerData,
+      store_name: storeName,
+      store_logo: storeLogo
+    } : null;
+
+    // Increment views
+    await supabase
+      .from('products')
+      .update({ views_count: (product.views_count || 0) + 1 })
+      .eq('product_id', id);
+
     res.json({
       success: true,
-      data: product
+      data: {
+        ...product,
+        seller
+      }
     });
 
   } catch (error: any) {

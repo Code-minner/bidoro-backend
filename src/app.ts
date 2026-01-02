@@ -20,6 +20,7 @@ import adminSellersRoutes from './routes/admin-sellers';
 import messagesRouter from './routes/messages';
 import adminCustomerRoutes from './routes/admin-customers';
 import sellerRoutes from './routes/seller';
+import sellerPublicRoutes from './routes/sellerPublicRoutes';
 import buyerRoutes from "./routes/buyer";
 
 
@@ -77,6 +78,7 @@ app.use('/api/messages', messagesRouter);
 app.use('/api/admin', adminCustomerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use("/api/buyer", buyerRoutes);
+app.use('/api/sellers', sellerPublicRoutes);
 
 
 // Global error handler
