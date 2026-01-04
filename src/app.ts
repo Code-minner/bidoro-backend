@@ -22,7 +22,7 @@ import adminCustomerRoutes from './routes/admin-customers';
 import sellerRoutes from './routes/seller';
 import sellerPublicRoutes from './routes/sellerPublicRoutes';
 import buyerRoutes from "./routes/buyer";
-
+import reviewsRouter from './routes/reviews';
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -79,7 +79,7 @@ app.use('/api/admin', adminCustomerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use("/api/buyer", buyerRoutes);
 app.use('/api/sellers', sellerPublicRoutes);
-
+app.use('/api/reviews', reviewsRouter);
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
