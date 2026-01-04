@@ -130,6 +130,34 @@ router.post("/register", async (req: Request, res: Response) => {
       });
     }
 
+    // ✅ CREATE USER PROFILE FOR MESSAGING SYSTEM
+    try {
+      const username = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '_');
+      
+      const { error: profileError } = await supabase
+        .from("user_profiles")
+        .insert({
+          id: newUser.user_id,
+          username: username,
+          full_name: name,
+          avatar_url: null,
+          is_online: false,
+          last_seen: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        });
+
+      if (profileError) {
+        console.error("Profile creation error:", profileError);
+        // Log the error but don't fail registration
+        // The profile can be created later if needed
+      } else {
+        console.log(`User profile created for ${email} with username: ${username}`);
+      }
+    } catch (profileCreationError) {
+      console.error("Failed to create user profile:", profileCreationError);
+      // Don't fail the registration if profile creation fails
+    }
+
     // Generate JWT tokens
     const accessToken = generateAccessToken(newUser.user_id, email);
     const refreshToken = generateRefreshToken(newUser.user_id);
@@ -254,11 +282,25 @@ router.post("/login", async (req: Request, res: Response) => {
       });
     }
 
-    // Update last active
+    // Update last active and online status
     await supabase
       .from("users")
       .update({ last_active: new Date().toISOString() })
       .eq("user_id", user.user_id);
+
+    // ✅ UPDATE USER PROFILE ONLINE STATUS
+    try {
+      await supabase
+        .from("user_profiles")
+        .upsert({
+          id: user.user_id,
+          is_online: true,
+          last_seen: new Date().toISOString()
+        });
+    } catch (profileError) {
+      console.error("Failed to update profile online status:", profileError);
+      // Don't fail login if profile update fails
+    }
 
     // Generate tokens
     const accessToken = generateAccessToken(user.user_id, user.email);
@@ -395,6 +437,21 @@ router.put(
           success: false,
           message: "Failed to update profile",
         });
+      }
+
+      // ✅ UPDATE USER PROFILE TABLE AS WELL
+      if (name || profile_picture) {
+        try {
+          await supabase
+            .from("user_profiles")
+            .update({
+              full_name: name,
+              avatar_url: profile_picture,
+            })
+            .eq("id", req.user!.id);
+        } catch (profileError) {
+          console.error("Failed to update user_profiles:", profileError);
+        }
       }
 
       res.json({
@@ -1093,211 +1150,204 @@ router.post("/reset-password", async (req: Request, res: Response) => {
     const { error: updateError } = await supabase
       .from("users")
       .update({
-        password: hashedPassword,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", resetRecord.user_id);
+         password: hashedPassword,
+    updated_at: new Date().toISOString(),
+  })
+  .eq("user_id", resetRecord.user_id);
 
-    if (updateError) {
-      return res.status(500).json({
-        success: false,
-        message: "Failed to update password",
-      });
-    }
+if (updateError) {
+  return res.status(500).json({
+    success: false,
+    message: "Failed to update password",
+  });
+}
 
-    // Mark reset code as used
-    await supabase
-      .from("password_resets")
-      .update({ used: true })
-      .eq("id", resetRecord.id);
+// Mark reset code as used
+await supabase
+  .from("password_resets")
+  .update({ used: true })
+  .eq("id", resetRecord.id);
 
-    // Send confirmation email
-    const { data: user } = await supabase
-      .from("users")
-      .select("name")
-      .eq("user_id", resetRecord.user_id)
-      .single();
+// Send confirmation email
+const { data: user } = await supabase
+  .from("users")
+  .select("name")
+  .eq("user_id", resetRecord.user_id)
+  .single();
 
-    if (user) {
-      await emailService.sendPasswordChangedEmail({
-        name: user.name,
-        email: email,
-      });
-    }
+if (user) {
+  await emailService.sendPasswordChangedEmail({
+    name: user.name,
+    email: email,
+  });
+}
 
-    res.json({
-      success: true,
-      message: "Password has been reset successfully",
-    });
-  } catch (error) {
-    console.error("Reset password error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
+res.json({
+  success: true,
+  message: "Password has been reset successfully",
 });
-
-
+} catch (error) {
+console.error("Reset password error:", error);
+res.status(500).json({
+success: false,
+message: "Internal server error",
+});
+}
+});
 // Resend password reset code
 router.post("/resend-reset-code", async (req: Request, res: Response) => {
-  try {
-    const { email } = req.body;
+try {
+const { email } = req.body;
+if (!email) {
+  return res.status(400).json({
+    success: false,
+    message: "Email is required",
+  });
+}
 
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is required",
-      });
-    }
+// Check if user exists
+const { data: user, error } = await supabase
+  .from("users")
+  .select("user_id, name, email")
+  .eq("email", email)
+  .single();
 
-    // Check if user exists
-    const { data: user, error } = await supabase
-      .from("users")
-      .select("user_id, name, email")
-      .eq("email", email)
-      .single();
+if (error || !user) {
+  return res.json({
+    success: true,
+    message:
+      "If an account with this email exists, a new reset code has been sent",
+  });
+}
 
-    if (error || !user) {
-      return res.json({
-        success: true,
-        message:
-          "If an account with this email exists, a new reset code has been sent",
-      });
-    }
+// Generate new 4-digit reset code
+const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
+const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // Generate new 4-digit reset code
-    const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+// Update or insert reset code
+await supabase.from("password_resets").delete().eq("user_id", user.user_id);
 
-    // Update or insert reset code
-    await supabase.from("password_resets").delete().eq("user_id", user.user_id);
+await supabase.from("password_resets").insert({
+  user_id: user.user_id,
+  email: user.email,
+  code: resetCode,
+  expires_at: expiresAt.toISOString(),
+  created_at: new Date().toISOString(),
+});
 
-    await supabase.from("password_resets").insert({
-      user_id: user.user_id,
-      email: user.email,
-      code: resetCode,
-      expires_at: expiresAt.toISOString(),
-      created_at: new Date().toISOString(),
-    });
+// Send email
+await emailService.sendPasswordResetEmail({
+  name: user.name,
+  email: user.email,
+  resetCode,
+});
 
-    // Send email
-    await emailService.sendPasswordResetEmail({
-      name: user.name,
-      email: user.email,
-      resetCode,
-    });
-
-    res.json({
-      success: true,
-      message:
-        "If an account with this email exists, a new reset code has been sent",
-      ...(process.env.NODE_ENV === "development" && { dev_code: resetCode }),
-    });
-  } catch (error) {
-    console.error("Resend reset code error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
-}); // <-- THIS WAS MISSING!
-
+res.json({
+  success: true,
+  message:
+    "If an account with this email exists, a new reset code has been sent",
+  ...(process.env.NODE_ENV === "development" && { dev_code: resetCode }),
+});
+} catch (error) {
+console.error("Resend reset code error:", error);
+res.status(500).json({
+success: false,
+message: "Internal server error",
+});
+}
+});
 // Change password (authenticated user)
 router.post(
-  "/change-password",
-  authenticateToken,
-  async (req: AuthRequest, res: Response) => {
-    try {
-      const { old_password, new_password } = req.body;
-      const userId = req.user!.id;
-
-      if (!old_password || !new_password) {
-        return res.status(400).json({
-          success: false,
-          message: "Old password and new password are required",
-        });
-      }
-
-      // Validate new password
-      const passwordValidation = validatePassword(new_password);
-      if (!passwordValidation.isValid) {
-        return res.status(400).json({
-          success: false,
-          message: passwordValidation.message,
-        });
-      }
-
-      // Get user with current password
-      const { data: user, error } = await supabase
-        .from("users")
-        .select("user_id, email, name, password")
-        .eq("user_id", userId)
-        .single();
-
-      if (error || !user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      // Verify old password
-      const passwordMatch = await comparePassword(old_password, user.password);
-      if (!passwordMatch) {
-        return res.status(401).json({
-          success: false,
-          message: "Current password is incorrect",
-        });
-      }
-
-      // Check if new password is same as old
-      const samePassword = await comparePassword(new_password, user.password);
-      if (samePassword) {
-        return res.status(400).json({
-          success: false,
-          message: "New password must be different from current password",
-        });
-      }
-
-      // Hash new password
-      const hashedPassword = await hashPassword(new_password);
-
-      // Update password
-      const { error: updateError } = await supabase
-        .from("users")
-        .update({
-          password: hashedPassword,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("user_id", userId);
-
-      if (updateError) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to update password",
-        });
-      }
-
-      // Send confirmation email
-      await emailService.sendPasswordChangedEmail({
-        name: user.name,
-        email: user.email,
-      });
-
-      res.json({
-        success: true,
-        message: "Password changed successfully",
-      });
-    } catch (error) {
-      console.error("Change password error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
-    }
+"/change-password",
+authenticateToken,
+async (req: AuthRequest, res: Response) => {
+try {
+const { old_password, new_password } = req.body;
+const userId = req.user!.id;
+  if (!old_password || !new_password) {
+    return res.status(400).json({
+      success: false,
+      message: "Old password and new password are required",
+    });
   }
-);
 
- 
+  // Validate new password
+  const passwordValidation = validatePassword(new_password);
+  if (!passwordValidation.isValid) {
+    return res.status(400).json({
+      success: false,
+      message: passwordValidation.message,
+    });
+  }
+
+  // Get user with current password
+  const { data: user, error } = await supabase
+    .from("users")
+    .select("user_id, email, name, password")
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !user) {
+    return res.status(404).json({
+      success: false,
+      message: "User not found",
+    });
+  }
+
+  // Verify old password
+  const passwordMatch = await comparePassword(old_password, user.password);
+  if (!passwordMatch) {
+    return res.status(401).json({
+      success: false,
+      message: "Current password is incorrect",
+    });
+  }
+
+  // Check if new password is same as old
+  const samePassword = await comparePassword(new_password, user.password);
+  if (samePassword) {
+    return res.status(400).json({
+      success: false,
+      message: "New password must be different from current password",
+    });
+  }
+
+  // Hash new password
+  const hashedPassword = await hashPassword(new_password);
+
+  // Update password
+  const { error: updateError } = await supabase
+    .from("users")
+    .update({
+      password: hashedPassword,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+
+  if (updateError) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update password",
+    });
+  }
+
+  // Send confirmation email
+  await emailService.sendPasswordChangedEmail({
+    name: user.name,
+    email: user.email,
+  });
+
+  res.json({
+    success: true,
+    message: "Password changed successfully",
+  });
+} catch (error) {
+  console.error("Change password error:", error);
+  res.status(500).json({
+    success: false,
+    message: "Internal server error",
+  });
+}
+}
+);
 export default router;

@@ -36,6 +36,9 @@ const upload = multer({
 // ================================================
 // GET ALL CONVERSATIONS FOR CURRENT USER
 // ================================================
+// ================================================
+// GET ALL CONVERSATIONS FOR CURRENT USER
+// ================================================
 router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
@@ -70,30 +73,39 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
       participantIds.add(conv.seller_id);
     });
 
+    // ✅ UPDATED: Query from 'users' table to get profile_picture
     const { data: profiles } = await supabase
+      .from('users')
+      .select('user_id, name, email, profile_picture')
+      .in('user_id', Array.from(participantIds));
+
+    // ✅ UPDATED: Also get online status from user_profiles
+    const { data: userProfiles } = await supabase
       .from('user_profiles')
-      .select('id, username, full_name, avatar_url, is_online, last_seen')
+      .select('id, username, full_name, is_online, last_seen')
       .in('id', Array.from(participantIds));
 
-    const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+    const profileMap = new Map(profiles?.map(p => [p.user_id, p]) || []);
+    const userProfileMap = new Map(userProfiles?.map(p => [p.id, p]) || []);
 
     // Format conversations
     const formattedConversations = conversations?.map(conv => {
       const otherUserId = conv.buyer_id === userId ? conv.seller_id : conv.buyer_id;
-      const otherUser = profileMap.get(otherUserId);
+      const userProfile = profileMap.get(otherUserId);
+      const onlineStatus = userProfileMap.get(otherUserId);
       const unreadCount = conv.buyer_id === userId 
         ? conv.unread_count_buyer 
         : conv.unread_count_seller;
 
       return {
         id: conv.conversation_id,
-        otherUser: otherUser ? {
-          id: otherUser.id,
-          username: otherUser.username,
-          fullName: otherUser.full_name,
-          avatarUrl: otherUser.avatar_url,
-          isOnline: otherUser.is_online,
-          lastSeen: otherUser.last_seen
+        otherUser: userProfile ? {
+          id: otherUserId,
+          username: onlineStatus?.username || userProfile.name,
+          fullName: onlineStatus?.full_name || userProfile.name,
+          avatarUrl: userProfile.profile_picture, // ✅ From users table
+          isOnline: onlineStatus?.is_online || false,
+          lastSeen: onlineStatus?.last_seen || new Date().toISOString()
         } : null,
         productId: conv.product_id,
         orderId: conv.order_id,
@@ -120,9 +132,7 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
   }
 });
 
-// ================================================
-// GET OR CREATE CONVERSATION
-// ================================================
+
 // ================================================
 // GET OR CREATE CONVERSATION - FIXED
 // ================================================
