@@ -101,6 +101,7 @@ router.get('/product/:productId', async (req, res) => {
 /**
  * GET /api/v1/reviews/seller/:sellerId
  * Get all reviews for a seller (across all their products)
+ * PUBLIC - anyone can see seller reviews
  */
 router.get('/seller/:sellerId', async (req, res) => {
   try {
@@ -109,6 +110,7 @@ router.get('/seller/:sellerId', async (req, res) => {
     const limit = parseInt(req.query.limit as string) || 10;
     const offset = (page - 1) * limit;
 
+    // Query reviews where the seller_id matches OR where reviewed_user_id matches
     const { data: reviews, error, count } = await supabase
       .from('reviews')
       .select(`
@@ -117,14 +119,9 @@ router.get('/seller/:sellerId', async (req, res) => {
           user_id,
           name,
           profile_picture
-        ),
-        product:products!reviews_product_id_fkey(
-          product_id,
-          title,
-          slug
         )
       `, { count: 'exact' })
-      .eq('seller_id', sellerId)
+      .or(`seller_id.eq.${sellerId},reviewed_user_id.eq.${sellerId}`)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -137,7 +134,7 @@ router.get('/seller/:sellerId', async (req, res) => {
     const { data: avgData } = await supabase
       .from('reviews')
       .select('communication_rating, shipping_rating, authenticity_rating')
-      .eq('seller_id', sellerId);
+      .or(`seller_id.eq.${sellerId},reviewed_user_id.eq.${sellerId}`);
 
     const averages = calculateAverages(avgData as RatingData[] || []);
 
