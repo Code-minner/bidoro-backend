@@ -49,7 +49,7 @@ router.get('/product/:productId', async (req, res) => {
     const limit = parseInt(req.query.limit as string) || 10;
     const offset = (page - 1) * limit;
 
-    // Get reviews with reviewer info
+    // Get reviews with reviewer info (including email)
     const { data: reviews, error, count } = await supabase
       .from('reviews')
       .select(`
@@ -57,6 +57,7 @@ router.get('/product/:productId', async (req, res) => {
         reviewer:users!reviews_reviewer_id_fkey(
           user_id,
           name,
+          email,
           profile_picture
         )
       `, { count: 'exact' })
@@ -118,6 +119,7 @@ router.get('/seller/:sellerId', async (req, res) => {
         reviewer:users!reviews_reviewer_id_fkey(
           user_id,
           name,
+          email,
           profile_picture
         )
       `, { count: 'exact' })
@@ -229,6 +231,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
         reviewer:users!reviews_reviewer_id_fkey(
           user_id,
           name,
+          email,
           profile_picture
         )
       `)
@@ -312,6 +315,7 @@ router.put('/:reviewId', authenticateToken, async (req: AuthRequest, res) => {
         reviewer:users!reviews_reviewer_id_fkey(
           user_id,
           name,
+          email,
           profile_picture
         )
       `)
