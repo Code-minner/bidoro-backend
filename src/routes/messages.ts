@@ -33,9 +33,7 @@ const upload = multer({
   }
 });
 
-// ================================================
-// GET ALL CONVERSATIONS FOR CURRENT USER
-// ================================================
+
 // ================================================
 // GET ALL CONVERSATIONS FOR CURRENT USER
 // ================================================
@@ -134,8 +132,10 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
 
 
 // ================================================
-// GET OR CREATE CONVERSATION - FIXED
+// UPDATE 1: GET OR CREATE CONVERSATION - Add isNew flag
 // ================================================
+
+// Replace the existing endpoint with this:
 router.post('/conversations/get-or-create', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
@@ -154,7 +154,6 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       });
     }
 
-    // Use NULL if productId is not provided (for general inquiries)
     const validProductId = productId || null;
 
     // Check if conversation already exists
@@ -162,17 +161,15 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       .from('conversations')
       .select('conversation_id');
     
-    // Build query based on whether productId is provided
     if (validProductId) {
       query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.eq.${validProductId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.eq.${validProductId})`);
     } else {
-      // For general inquiries (no product), find conversation between users with null product_id
       query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.is.null),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.is.null)`);
     }
     
     const { data: existingConv, error: searchError } = await query
       .limit(1)
-      .maybeSingle(); // Use maybeSingle() instead of single() to avoid error when not found
+      .maybeSingle();
 
     if (searchError) {
       console.error('Error searching for conversation:', searchError);
@@ -183,7 +180,10 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       console.log('Found existing conversation:', existingConv.conversation_id);
       return res.json({
         success: true,
-        data: { conversationId: existingConv.conversation_id }
+        data: { 
+          conversationId: existingConv.conversation_id,
+          isNew: false // ✅ EXISTING CONVERSATION
+        }
       });
     }
 
@@ -216,7 +216,10 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
 
     res.json({
       success: true,
-      data: { conversationId: newConv.conversation_id }
+      data: { 
+        conversationId: newConv.conversation_id,
+        isNew: true // ✅ NEW CONVERSATION
+      }
     });
   } catch (error: any) {
     console.error('Error in get-or-create conversation:', error);
@@ -287,7 +290,8 @@ const formattedMessages = messages?.map(msg => ({
   senderId: msg.sender_id,
   content: msg.content,
   messageType: msg.message_type,
-  imageUrl: msg.metadata?.image_url, // Extract from metadata
+  metadata: msg.metadata, // ✅ ADD THIS - Include full metadata
+  imageUrl: msg.metadata?.image_url,
   isRead: msg.is_read,
   createdAt: msg.created_at,
   updatedAt: undefined,
@@ -309,12 +313,14 @@ const formattedMessages = messages?.map(msg => ({
 });
 
 // ================================================
-// SEND A TEXT MESSAGE
+// UPDATE 2: SEND MESSAGE - Support Product Reference
 // ================================================
+
+// Replace the existing POST messages endpoint with this:
 router.post('/conversations/:conversationId/messages', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { conversationId } = req.params;
-    const { content } = req.body;
+    const { content, productReference } = req.body; // ✅ ADD productReference
     const userId = req.user!.id;
 
     if (!content || content.trim().length === 0) {
@@ -338,6 +344,20 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
       });
     }
 
+    // Determine message type based on whether it has product reference
+    const messageType = productReference ? 'product' : 'text';
+    
+    // Build metadata object
+    const metadata = productReference ? {
+      productId: productReference.productId,
+      productName: productReference.productName,
+      productPrice: productReference.productPrice,
+      productImage: productReference.productImage,
+      condition: productReference.condition,
+      negotiable: productReference.negotiable,
+      verified: productReference.verified
+    } : null;
+
     // Insert message
     const { data: message, error } = await supabase
       .from('messages')
@@ -346,7 +366,8 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
         conversation_id: conversationId,
         sender_id: userId,
         content: content.trim(),
-        message_type: 'text',
+        message_type: messageType, // ✅ 'product' or 'text'
+        metadata: metadata, // ✅ Store product info
         is_read: false,
         created_at: new Date().toISOString()
       })
@@ -354,6 +375,16 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
       .single();
 
     if (error) throw error;
+
+    // Update conversation's last message
+    await supabase
+      .from('conversations')
+      .update({
+        last_message_preview: content.trim(),
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('conversation_id', conversationId);
 
     res.json({
       success: true,
