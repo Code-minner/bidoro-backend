@@ -24,6 +24,10 @@ import sellerPublicRoutes from './routes/sellerPublicRoutes';
 import buyerRoutes from "./routes/buyer";
 import reviewsRouter from './routes/reviews';
 import categoriesRoutes from './routes/categories';
+import wishlistRoutes from './routes/wishlist';
+
+
+
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -82,6 +86,7 @@ app.use("/api/buyer", buyerRoutes);
 app.use('/api/sellers', sellerPublicRoutes);
 app.use('/api/reviews', reviewsRouter);
 app.use('/api/categories', categoriesRoutes);
+app.use('/api/wishlist', wishlistRoutes);
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
