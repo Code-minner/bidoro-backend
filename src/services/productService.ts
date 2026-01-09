@@ -8,6 +8,7 @@ export class ProductService {
   constructor() {
     this.ocrService = new OCRService();
   }
+  
   async createProduct(data: any) {
     try {
       // 1. Get category_id from category key
@@ -56,11 +57,16 @@ export class ProductService {
         shipping_available: delivery.shipping_available,
         pickup_available: delivery.pickup_available,
 
+        // ✅ VIDEO URL FOR REELS
+        video_url: data.verification?.videoFile || null,
+
         // Metadata (category-specific fields)
         metadata: {
           categoryKey: data.productCore.category,
           subcategoryKey: data.productCore.subcategory,
           specifications: data.productDetails.specifications || {},
+          // Also store receipt URL in metadata if provided
+          receiptFile: data.verification?.receiptFile || null,
         },
 
         // Verification
@@ -92,6 +98,9 @@ export class ProductService {
       }
 
       console.log("✅ Product created:", product.product_id);
+      if (data.verification?.videoFile) {
+        console.log("🎬 Video URL saved:", data.verification.videoFile);
+      }
 
       // 6. Save images
       let images: any[] = [];
@@ -102,11 +111,10 @@ export class ProductService {
         );
       }
 
-      // // 7. Create verification record
+      // // 7. Create verification record (commented out)
       // let verification = null;
       // if (data.verification?.videoFile || data.verification?.receiptFile) {
       //   verification = await this.createVerification(product.product_id, data.verification);
-
       //   // If receipt was auto-verified, update product status
       //   if (verification.status === 'approved') {
       //     await supabase
@@ -114,15 +122,13 @@ export class ProductService {
       //       .update({
       //         verification_status: 'verified',
       //         receipt_verified: true,
-      //         status: 'active' // Automatically publish if verified
+      //         status: 'active'
       //       })
       //       .eq('product_id', product.product_id);
-
       //     console.log('✅ Product auto-verified and published!');
       //   }
       // }
 
-      // return { product, images, verification };
       let verification = null;
 
       console.log("✅ Product creation complete!");
@@ -150,7 +156,7 @@ export class ProductService {
       .select();
 
     if (error) {
-      console.error("❌ Image save error:", error); // This will show the actual error
+      console.error("❌ Image save error:", error);
       throw new Error("Failed to save images");
     }
 
@@ -183,7 +189,6 @@ export class ProductService {
         }
       } catch (error) {
         console.error("❌ OCR failed:", error);
-        // Continue without OCR if it fails
       }
     }
 
