@@ -23,16 +23,12 @@ import sellerRoutes from './routes/seller';
 import sellerPublicRoutes from './routes/sellerPublicRoutes';
 import buyerRoutes from "./routes/buyer";
 import reviewsRouter from './routes/reviews';
-<<<<<<< HEAD
 import ordersRoutes from './routes/orders';
 import requestsRoutes from './routes/requests';
-=======
 import categoriesRoutes from './routes/categories';
 import wishlistRoutes from './routes/wishlist';
 
 
-
->>>>>>> 2b8f87503dc9b38e140ebe41312e7bb7d4fb4a44
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -90,13 +86,11 @@ app.use('/api/seller', sellerRoutes);
 app.use("/api/buyer", buyerRoutes);
 app.use('/api/sellers', sellerPublicRoutes);
 app.use('/api/reviews', reviewsRouter);
-<<<<<<< HEAD
 app.use('/api/orders', ordersRoutes);
 app.use('/api/requests', requestsRoutes);
-=======
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/wishlist', wishlistRoutes);
->>>>>>> 2b8f87503dc9b38e140ebe41312e7bb7d4fb4a44
+
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
