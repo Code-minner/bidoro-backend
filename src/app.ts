@@ -29,12 +29,9 @@ import categoriesRoutes from './routes/categories';
 import wishlistRoutes from './routes/wishlist';
 import auctionRoutes from './routes/auctions';
 
-<<<<<<< HEAD
 
 
 
-=======
->>>>>>> d5ad0bed2eb2ae0d65afa6797bed245e225dc00b
 const app = express();
 const PORT = process.env.PORT || 3003;
 
@@ -107,11 +104,8 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/requests', requestsRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/wishlist', wishlistRoutes);
-<<<<<<< HEAD
 
-=======
 app.use('/api/auctions', auctionRoutes);
->>>>>>> d5ad0bed2eb2ae0d65afa6797bed245e225dc00b
 
 // ====================
 // Global error handler
