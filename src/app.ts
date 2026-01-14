@@ -27,6 +27,8 @@ import ordersRoutes from './routes/orders';
 import requestsRoutes from './routes/requests';
 import categoriesRoutes from './routes/categories';
 import wishlistRoutes from './routes/wishlist';
+import auctionRoutes from './routes/auctions';
+
 
 
 
@@ -90,6 +92,7 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/requests', requestsRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/wishlist', wishlistRoutes);
+app.use('/api/auctions', auctionRoutes);
 
 
 // Global error handler

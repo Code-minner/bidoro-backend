@@ -431,4 +431,61 @@ async function updateSellerRating(sellerId: string) {
   }
 }
 
+/**
+ * GET /api/v1/reviews/my-reviews
+ * Get all reviews written by the logged-in user
+ */
+router.get('/my-reviews', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+
+    const { data: reviews, error } = await supabase
+      .from('reviews')
+      .select(`
+        *,
+        seller:users!reviews_seller_id_fkey(
+          user_id,
+          name,
+          email,
+          profile_picture
+        ),
+        product:products(
+          product_id,
+          name,
+          product_images(image_url, is_primary)
+        )
+      `)
+      .eq('reviewer_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('My reviews fetch error:', error);
+      throw error;
+    }
+
+    // Format the response
+    const formattedReviews = (reviews || []).map(review => ({
+      ...review,
+      seller_name: review.seller?.name || 'Unknown Seller',
+      seller_picture: review.seller?.profile_picture || null,
+      product_name: review.product?.name || 'Unknown Product',
+      product_image: review.product?.product_images?.find((img: any) => img.is_primary)?.image_url 
+        || review.product?.product_images?.[0]?.image_url 
+        || null
+    }));
+
+    res.json({
+      success: true,
+      data: formattedReviews
+    });
+
+  } catch (error: any) {
+    console.error('❌ My reviews fetch error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch your reviews'
+    });
+  }
+});
+
 export default router;
