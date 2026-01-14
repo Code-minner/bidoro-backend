@@ -30,10 +30,7 @@ import wishlistRoutes from './routes/wishlist';
 
 
 
-<<<<<<< HEAD
 
-=======
->>>>>>> 068bc28d6c844485362bb3dc31dea2a32d15ff06
 const app = express();
 const PORT = process.env.PORT || 3003;
 
@@ -94,10 +91,7 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/requests', requestsRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/wishlist', wishlistRoutes);
-<<<<<<< HEAD
-=======
 
->>>>>>> 068bc28d6c844485362bb3dc31dea2a32d15ff06
 
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
