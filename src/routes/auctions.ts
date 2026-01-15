@@ -147,7 +147,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
     }
     // If categoryId is a slug like "accessories", we skip it (null)
 
-    // Calculate scheduled start (next Friday at 9 AM)
+    // Calculate scheduled start (next Friday at 12 PM) and end (Friday at 6 PM)
     const { data: settings } = await supabase
       .from('auction_settings')
       .select('*')
@@ -155,15 +155,33 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       .single();
 
     let scheduledStart = new Date();
-    if (settings) {
-      const daysUntilFriday = (settings.auction_day - scheduledStart.getDay() + 7) % 7 || 7;
-      scheduledStart.setDate(scheduledStart.getDate() + daysUntilFriday);
-      scheduledStart.setHours(
-        parseInt(settings.start_time.split(':')[0]),
-        parseInt(settings.start_time.split(':')[1]),
-        0, 0
-      );
+    let scheduledEnd = new Date();
+    
+    // Default: Friday (5), 12:00 PM start, 6:00 PM end
+    const auctionDay = settings?.auction_day ?? 5; // Friday
+    const startHour = settings?.start_time ? parseInt(settings.start_time.split(':')[0]) : 12;
+    const startMinute = settings?.start_time ? parseInt(settings.start_time.split(':')[1]) : 0;
+    const endHour = settings?.end_time ? parseInt(settings.end_time.split(':')[0]) : 18;
+    const endMinute = settings?.end_time ? parseInt(settings.end_time.split(':')[1]) : 0;
+
+    // Calculate days until next Friday
+    let daysUntilFriday = (auctionDay - scheduledStart.getDay() + 7) % 7;
+    if (daysUntilFriday === 0) {
+      // If today is Friday, check if auction window has passed
+      const currentHour = scheduledStart.getHours();
+      if (currentHour >= endHour) {
+        daysUntilFriday = 7; // Next Friday
+      }
     }
+    if (daysUntilFriday === 0 && scheduledStart.getDay() !== auctionDay) {
+      daysUntilFriday = 7;
+    }
+
+    scheduledStart.setDate(scheduledStart.getDate() + daysUntilFriday);
+    scheduledStart.setHours(startHour, startMinute, 0, 0);
+
+    scheduledEnd.setDate(scheduledEnd.getDate() + daysUntilFriday);
+    scheduledEnd.setHours(endHour, endMinute, 0, 0);
 
     // Create auction
     // Ensure images is a proper array
@@ -186,6 +204,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       buy_now_price: buyNowPrice || null,
       duration_days: durationDays || 1,
       scheduled_start: scheduledStart.toISOString(),
+      scheduled_end: scheduledEnd.toISOString(),
       status: 'scheduled',
       location_state: productData?.location_state || locationState || null,
       location_city: productData?.location_city || locationCity || null
