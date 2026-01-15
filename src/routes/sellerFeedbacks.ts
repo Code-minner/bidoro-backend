@@ -271,7 +271,7 @@ router.get('/seller/:sellerId', async (req: Request, res: Response) => {
 
 router.post('/', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const {
       sellerId,
       orderId,
@@ -409,7 +409,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response) => {
 
 router.patch('/:reviewId', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const { reviewId } = req.params;
     const {
       communicationRating,
@@ -524,7 +524,7 @@ router.patch('/:reviewId', authenticateToken, async (req: Request, res: Response
 
 router.delete('/:reviewId', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const { reviewId } = req.params;
 
     // Check ownership
@@ -576,7 +576,7 @@ router.delete('/:reviewId', authenticateToken, async (req: Request, res: Respons
 
 router.post('/:reviewId/reply', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const { reviewId } = req.params;
     const { replyText }: CreateReplyBody = req.body;
 
@@ -662,7 +662,7 @@ router.post('/:reviewId/reply', authenticateToken, async (req: Request, res: Res
 
 router.patch('/reply/:replyId', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const { replyId } = req.params;
     const { replyText }: CreateReplyBody = req.body;
 
@@ -729,7 +729,7 @@ router.patch('/reply/:replyId', authenticateToken, async (req: Request, res: Res
 
 router.delete('/reply/:replyId', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const { replyId } = req.params;
 
     // Check ownership
@@ -781,7 +781,7 @@ router.delete('/reply/:replyId', authenticateToken, async (req: Request, res: Re
 
 router.get('/my-reviews', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id;
     const { page = '1', limit = '10' } = req.query;
 
     const pageNum = parseInt(page as string);
