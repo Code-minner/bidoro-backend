@@ -3,10 +3,19 @@ import { supabase } from '../config/supabase';
 import { hashPassword, comparePassword, generateToken } from '../utils/helpers';
 import { RegisterRequest, LoginRequest } from '../types';
 import { AuthRequest as AuthenticatedRequest } from '../middleware/auth';
+import { onUserSignup } from '../utils/referral.utils'; // Add this import
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password, role = 'buyer', phone_number, location }: RegisterRequest = req.body;
+    const { 
+      name, 
+      email, 
+      password, 
+      role = 'buyer', 
+      phone_number, 
+      location,
+      referral_code  // Add referral_code to request body
+    }: RegisterRequest & { referral_code?: string } = req.body;
 
     // Check if user already exists
     const { data: existingUser } = await supabase
@@ -42,7 +51,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           account_status: 'active'
         }
       ])
-      .select('user_id, name, email, role, phone_number, location, kyc_status, trust_score, account_status, created_at, updated_at')
+      .select('user_id, name, email, role, phone_number, location, kyc_status, trust_score, account_status, referral_code, total_points, created_at, updated_at')
       .single();
 
     if (error) {
@@ -54,15 +63,25 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Apply referral code if provided
+    let referralBonus: number | undefined;
+    if (referral_code) {
+      const referralResult = await onUserSignup(newUser.user_id, referral_code);
+      referralBonus = referralResult.pointsEarned;
+    }
+
     // Generate JWT token
     const token = generateToken(newUser);
 
     res.status(201).json({
       success: true,
-      message: 'User registered successfully',
+      message: referralBonus 
+        ? `User registered successfully! You earned ${referralBonus} bonus points!`
+        : 'User registered successfully',
       data: {
         user: newUser,
-        token
+        token,
+        referral_bonus: referralBonus
       }
     });
 
@@ -148,8 +167,8 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response): Prom
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select('user_id, name, email, role, phone_number, location, profile_picture, kyc_status, trust_score, account_status, created_at, updated_at')
-      .eq('user_id', req.user!.id)  // Changed from userId to id
+      .select('user_id, name, email, role, phone_number, location, profile_picture, kyc_status, trust_score, account_status, referral_code, total_points, redeemable_points, referral_count, created_at, updated_at')
+      .eq('user_id', req.user!.id)
       .single();
 
     if (error || !user) {
@@ -189,8 +208,8 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
     const { data: updatedUser, error } = await supabase
       .from('users')
       .update(updateData)
-      .eq('user_id', req.user!.id)  // Changed from userId to id
-      .select('user_id, name, email, role, phone_number, location, profile_picture, kyc_status, trust_score, account_status, created_at, updated_at')
+      .eq('user_id', req.user!.id)
+      .select('user_id, name, email, role, phone_number, location, profile_picture, kyc_status, trust_score, account_status, referral_code, total_points, redeemable_points, created_at, updated_at')
       .single();
 
     if (error) {
@@ -223,7 +242,7 @@ export const logout = async (req: AuthenticatedRequest, res: Response): Promise<
     await supabase
       .from('users')
       .update({ last_active: new Date().toISOString() })
-      .eq('user_id', req.user!.id);  // Changed from userId to id
+      .eq('user_id', req.user!.id);
 
     res.status(200).json({
       success: true,

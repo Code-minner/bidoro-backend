@@ -29,6 +29,8 @@ import categoriesRoutes from './routes/categories';
 import wishlistRoutes from './routes/wishlist';
 import auctionRoutes from './routes/auctions';
 import sellerFeedbacksRoutes from './routes/sellerFeedbacks';
+import referralRoutes from './routes/referral.routes';
+
 
 
 
@@ -110,6 +112,8 @@ app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/auctions', auctionRoutes);
 
 app.use('/api/feedbacks', sellerFeedbacksRoutes);
+
+app.use('/api/referral', referralRoutes);
 
 // ====================
 // Global error handler
