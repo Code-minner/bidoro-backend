@@ -95,7 +95,7 @@ class ReferralService {
       referral_count: user.referral_count,
       active_referrals: user.active_referrals,
       referral_code: user.referral_code,
-      referral_link: `${baseUrl}/signup?ref=${user.referral_code}`,
+      referral_link: `${baseUrl}/register?ref=${user.referral_code}`,
     };
   }
 
