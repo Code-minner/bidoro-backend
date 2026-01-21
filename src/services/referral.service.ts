@@ -86,7 +86,9 @@ class ReferralService {
     if (error) throw new Error(`Failed to fetch user stats: ${error.message}`);
 
     const pointsToNaira = await this.getConfigValue(PointsConfigKey.POINTS_TO_NAIRA_RATE);
-    const baseUrl = process.env.FRONTEND_URL || 'https://bidoro.com.ng';
+    const baseUrl = process.env.NODE_ENV === 'production' 
+  ? 'https://bidoro-web-app-frontend.vercel.app' 
+  : 'http://localhost:3000';
 
     return {
       total_points: user.total_points,
