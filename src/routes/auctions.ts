@@ -115,6 +115,45 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       });
     }
 
+    // Validate starting price is positive
+    if (startingPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Starting price must be greater than 0'
+      });
+    }
+
+    // ============================================================
+    // PRICE VALIDATION - Prevent invalid pricing
+    // ============================================================
+    
+    // Buy Now price must be higher than starting price
+    if (buyNowPrice && buyNowPrice <= startingPrice) {
+      return res.status(400).json({
+        success: false,
+        error: `Buy Now price (₦${buyNowPrice.toLocaleString()}) must be higher than starting price (₦${startingPrice.toLocaleString()})`
+      });
+    }
+
+    // Reserve price should be between starting price and buy now price
+    if (reservePrice) {
+      if (reservePrice < startingPrice) {
+        return res.status(400).json({
+          success: false,
+          error: `Reserve price (₦${reservePrice.toLocaleString()}) cannot be lower than starting price (₦${startingPrice.toLocaleString()})`
+        });
+      }
+      
+      if (buyNowPrice && reservePrice >= buyNowPrice) {
+        return res.status(400).json({
+          success: false,
+          error: `Reserve price (₦${reservePrice.toLocaleString()}) must be lower than Buy Now price (₦${buyNowPrice.toLocaleString()})`
+        });
+      }
+    }
+
+    // ============================================================
+
     // If productId provided, fetch product details
     let productData: any = null;
     if (productId) {
@@ -740,6 +779,15 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       throw bidError;
     }
 
+    // Update current_bid on the auction
+    await supabase
+      .from('auctions')
+      .update({
+        current_bid: amount,
+        total_bids: (auction.total_bids || 0) + 1
+      })
+      .eq('auction_id', auctionId);
+
     // TODO: Notify previous high bidder they've been outbid
     // TODO: Add to bidder's watchlist automatically
 
@@ -831,6 +879,156 @@ router.post('/:auctionId/watch', authenticateToken, async (req: AuthRequest, res
     res.status(500).json({
       success: false,
       error: 'Failed to add to watchlist'
+    });
+  }
+});
+
+/**
+ * GET /api/auctions/user/watchlist
+ * Get user's auction watchlist with full auction details
+ */
+router.get('/user/watchlist', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+
+    const { data, error } = await supabase
+      .from('auction_watchlist')
+      .select(`
+        id,
+        auction_id,
+        notify_outbid,
+        notify_ending,
+        created_at,
+        auction:auctions(
+          auction_id,
+          title,
+          images,
+          starting_price,
+          current_bid,
+          buy_now_price,
+          status,
+          total_bids,
+          scheduled_start,
+          scheduled_end,
+          categories(name, slug)
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Filter out items where auction was deleted
+    const validItems = data?.filter(item => item.auction !== null) || [];
+
+    res.json({
+      success: true,
+      data: validItems,
+      count: validItems.length
+    });
+
+  } catch (error: any) {
+    console.error('❌ Fetch auction watchlist error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch watchlist'
+    });
+  }
+});
+
+/**
+ * DELETE /api/auctions/:auctionId/unwatch
+ * Remove auction from watchlist
+ */
+router.delete('/:auctionId/unwatch', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { auctionId } = req.params;
+    const userId = req.user!.id;
+
+    const { error } = await supabase
+      .from('auction_watchlist')
+      .delete()
+      .eq('user_id', userId)
+      .eq('auction_id', auctionId);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'Removed from watchlist'
+    });
+
+  } catch (error: any) {
+    console.error('❌ Remove from watchlist error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove from watchlist'
+    });
+  }
+});
+
+/**
+ * GET /api/auctions/user/watchlist/ids
+ * Get list of auction IDs in user's watchlist (for quick checking)
+ */
+router.get('/user/watchlist/ids', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+
+    const { data, error } = await supabase
+      .from('auction_watchlist')
+      .select('auction_id')
+      .eq('user_id', userId);
+
+    if (error) throw error;
+
+    const auctionIds = data?.map(item => item.auction_id) || [];
+
+    res.json({
+      success: true,
+      data: auctionIds
+    });
+
+  } catch (error: any) {
+    console.error('❌ Fetch watchlist IDs error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch watchlist'
+    });
+  }
+});
+
+/**
+ * GET /api/auctions/user/watchlist/check/:auctionId
+ * Check if auction is in user's watchlist
+ */
+router.get('/user/watchlist/check/:auctionId', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const { auctionId } = req.params;
+
+    const { data, error } = await supabase
+      .from('auction_watchlist')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('auction_id', auctionId)
+      .single();
+
+    // PGRST116 means no rows found (not an error, just not in wishlist)
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      inWatchlist: !!data
+    });
+
+  } catch (error: any) {
+    console.error('❌ Check watchlist error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check watchlist'
     });
   }
 });

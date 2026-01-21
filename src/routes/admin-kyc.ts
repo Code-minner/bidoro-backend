@@ -1,14 +1,12 @@
 // src/routes/admin-kyc.ts
-// FIXED VERSION v2: 
-// 1. Removed kyc_verified_at reference (column doesn't exist)
-// 2. Added location mapping from KYC application to user
-// 3. Added error handling for user update
+// UPDATED: Added Paystack recipient creation on KYC approval
 
 import express from 'express';
 import { Request, Response } from 'express';
 import { supabaseAdmin as supabase } from "../config/database";
 import { authenticateToken, AuthRequest, requireAdmin } from '../middleware/auth';
 import { emailService } from '../services/emailService';
+import { paystackService } from '../services/paystackService'; // ← ADD THIS
 
 const router = express.Router();
 
@@ -288,7 +286,34 @@ router.put('/applications/:applicationId/status', async (req: AuthRequest, res: 
         console.log(`✅ Created new seller profile: ${profileId}`);
       }
 
-      // 2. Create/Update seller bank account
+      // =====================================================
+      // 2. CREATE PAYSTACK TRANSFER RECIPIENT FOR PAYOUTS
+      // =====================================================
+      console.log(`\n--- Creating Paystack Transfer Recipient ---`);
+      
+      let paystackRecipientCode: string | null = null;
+      
+      try {
+        const recipientResult = await paystackService.createTransferRecipient({
+          name: currentApp.account_name,
+          accountNumber: currentApp.account_number,
+          bankCode: currentApp.bank_code,
+        });
+
+        if (recipientResult.success) {
+          paystackRecipientCode = recipientResult.data.recipient_code;
+          console.log(`✅ Paystack recipient created: ${paystackRecipientCode}`);
+        } else {
+          console.error('❌ Failed to create Paystack recipient:', recipientResult.error);
+          // Don't fail the whole approval, just log it
+          // Can be retried later or done manually
+        }
+      } catch (paystackError) {
+        console.error('❌ Paystack API error:', paystackError);
+        // Continue with approval, recipient can be created later
+      }
+
+      // 3. Create/Update seller bank account WITH Paystack recipient code
       const { data: existingBank } = await supabase
         .from('seller_bank_accounts')
         .select('account_id')
@@ -307,11 +332,12 @@ router.put('/applications/:applicationId/status', async (req: AuthRequest, res: 
             account_name: currentApp.account_name,
             is_primary: true,
             status: 'active',
+            paystack_recipient_code: paystackRecipientCode, // ← ADD THIS
             updated_at: new Date().toISOString(),
           })
           .eq('account_id', existingBank.account_id);
 
-        console.log(`✅ Updated existing bank account`);
+        console.log(`✅ Updated existing bank account with recipient code`);
       } else {
         // Create new
         const { error: bankError } = await supabase
@@ -325,6 +351,7 @@ router.put('/applications/:applicationId/status', async (req: AuthRequest, res: 
             account_name: currentApp.account_name,
             is_primary: true,
             status: 'active',
+            paystack_recipient_code: paystackRecipientCode, // ← ADD THIS
           });
 
         if (bankError) {
@@ -332,7 +359,7 @@ router.put('/applications/:applicationId/status', async (req: AuthRequest, res: 
           throw new Error('Failed to create bank account');
         }
 
-        console.log(`✅ Created new bank account`);
+        console.log(`✅ Created new bank account with recipient code`);
       }
 
       console.log(`=== APPROVAL SETUP COMPLETED ===\n`);
@@ -505,6 +532,28 @@ router.post('/applications/bulk-action', async (req: AuthRequest, res: Response)
           continue;
         }
 
+        // =====================================================
+        // FOR BULK APPROVE: Create Paystack recipient
+        // =====================================================
+        let paystackRecipientCode: string | null = null;
+        
+        if (status === 'approved' && app.account_number && app.bank_code && app.account_name) {
+          try {
+            const recipientResult = await paystackService.createTransferRecipient({
+              name: app.account_name,
+              accountNumber: app.account_number,
+              bankCode: app.bank_code,
+            });
+
+            if (recipientResult.success) {
+              paystackRecipientCode = recipientResult.data.recipient_code;
+              console.log(`✅ Paystack recipient for ${appId}: ${paystackRecipientCode}`);
+            }
+          } catch (paystackError) {
+            console.error(`❌ Paystack error for ${appId}:`, paystackError);
+          }
+        }
+
         // Update application
         const updateData: any = {
           status,
@@ -553,6 +602,20 @@ router.post('/applications/bulk-action', async (req: AuthRequest, res: Response)
         
         if (userUpdateError) {
           console.error(`User update error for ${appId}:`, userUpdateError);
+        }
+
+        // =====================================================
+        // FOR BULK APPROVE: Update bank account with recipient code
+        // =====================================================
+        if (status === 'approved' && paystackRecipientCode) {
+          await supabase
+            .from('seller_bank_accounts')
+            .update({ 
+              paystack_recipient_code: paystackRecipientCode,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', app.user_id)
+            .eq('account_number', app.account_number);
         }
 
         // Log status change
