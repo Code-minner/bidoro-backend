@@ -65,17 +65,17 @@ class EmailService {
         console.error("🔧 Fix: Check network connection and firewall settings");
       } else if (error.code === "EAUTH") {
         console.error(
-          "🔧 Fix: Verify ZEPTOMAIL_USER and ZEPTOMAIL_PASS in .env"
+          "🔧 Fix: Verify ZEPTOMAIL_USER and ZEPTOMAIL_PASS in .env",
         );
       } else if (error.code === "ECONNECTION") {
         console.error(
-          "🔧 Fix: Check ZEPTOMAIL_HOST and ZEPTOMAIL_PORT settings"
+          "🔧 Fix: Check ZEPTOMAIL_HOST and ZEPTOMAIL_PORT settings",
         );
       }
 
       // Don't throw error - allow app to continue running
       console.warn(
-        "⚠️  Email service will retry connection on first send attempt"
+        "⚠️  Email service will retry connection on first send attempt",
       );
     }
   }
@@ -121,7 +121,7 @@ class EmailService {
 
   private getVerificationEmailTemplate(
     name: string,
-    verificationCode: string
+    verificationCode: string,
   ): string {
     return `
       <!DOCTYPE html>
@@ -499,7 +499,7 @@ class EmailService {
       const result = await this.transporter.sendMail(mailOptions);
       console.log(
         "✅ KYC submission email sent successfully:",
-        result.messageId
+        result.messageId,
       );
       return true;
     } catch (error: any) {
@@ -561,7 +561,7 @@ class EmailService {
       const result = await this.transporter.sendMail(mailOptions);
       console.log(
         "✅ KYC rejection email sent successfully:",
-        result.messageId
+        result.messageId,
       );
       return true;
     } catch (error: any) {
@@ -595,7 +595,7 @@ class EmailService {
       const result = await this.transporter.sendMail(mailOptions);
       console.log(
         "✅ Admin KYC notification sent successfully:",
-        result.messageId
+        result.messageId,
       );
       return true;
     } catch (error: any) {
@@ -730,7 +730,7 @@ class EmailService {
       const result = await this.transporter.sendMail(mailOptions);
       console.log(
         "✅ Password reset email sent successfully:",
-        result.messageId
+        result.messageId,
       );
 
       if (process.env.NODE_ENV === "development") {
@@ -888,7 +888,7 @@ class EmailService {
       const result = await this.transporter.sendMail(mailOptions);
       console.log(
         "✅ Password changed email sent successfully:",
-        result.messageId
+        result.messageId,
       );
       return true;
     } catch (error: any) {
@@ -965,6 +965,206 @@ class EmailService {
           </p>
         </div>
 
+      </body>
+    </html>
+  `;
+  }
+
+  // Order confirmation email to buyer
+  async sendOrderConfirmationEmail(data: {
+    name: string;
+    email: string;
+    orderNumber: string;
+    totalAmount: number;
+    items: any[];
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: `Order Confirmed - ${data.orderNumber} 🎉`,
+        html: this.getOrderConfirmationTemplate(data),
+        text: `Hi ${data.name},\n\nYour order ${data.orderNumber} has been confirmed!\n\nTotal: ₦${data.totalAmount.toLocaleString()}\n\nYour payment is held securely in escrow until you confirm delivery.\n\nThank you for shopping with BIDORO!`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Order confirmation email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Order confirmation email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getOrderConfirmationTemplate(data: {
+    name: string;
+    orderNumber: string;
+    totalAmount: number;
+    items: any[];
+  }): string {
+    const itemsList = data.items
+      .map(
+        (item) => `
+    <tr>
+      <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.product_name}</td>
+      <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
+      <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₦${(item.subtotal || item.total_price || 0).toLocaleString()}</td>
+    </tr>
+  `,
+      )
+      .join("");
+
+    return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Order Confirmed - BIDORO</title>
+      </head>
+      <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+        <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #1C341A 0%, #2d4a2a 100%); padding: 30px; text-align: center;">
+            <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
+                 alt="BIDORO" style="width: 150px; margin-bottom: 15px;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Order Confirmed! 🎉</h1>
+          </div>
+
+          <!-- Content -->
+          <div style="padding: 30px;">
+            <p style="font-size: 16px; color: #333;">Hi ${data.name},</p>
+            <p style="font-size: 16px; color: #333;">Great news! Your order has been confirmed and your payment is secured.</p>
+
+            <!-- Order Info -->
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Order Number:</strong> ${data.orderNumber}</p>
+              <p style="margin: 0;"><strong>Total Amount:</strong> ₦${data.totalAmount.toLocaleString()}</p>
+            </div>
+
+            <!-- Items Table -->
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+              <thead>
+                <tr style="background: #f8f9fa;">
+                  <th style="padding: 10px; text-align: left;">Item</th>
+                  <th style="padding: 10px; text-align: center;">Qty</th>
+                  <th style="padding: 10px; text-align: right;">Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsList}
+              </tbody>
+            </table>
+
+            <!-- Escrow Notice -->
+            <div style="background: #dcfce7; border: 1px solid #86efac; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0; color: #166534; font-size: 14px;">
+                🔒 <strong>Escrow Protection:</strong> Your payment is held securely until you confirm delivery of your items.
+              </p>
+            </div>
+
+            <p style="font-size: 14px; color: #666;">
+              The seller will be notified and will prepare your order for delivery/pickup.
+            </p>
+
+            <!-- CTA Button -->
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="https://bidoro.africa/orders" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                View My Orders
+              </a>
+            </div>
+
+            <p style="font-size: 14px; color: #333;">
+              Thank you for shopping with BIDORO!<br>
+              <strong>— The BIDORO Team</strong>
+            </p>
+          </div>
+
+          <!-- Footer -->
+          <div style="background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
+            <p style="margin: 0;">© 2025 BIDORO. All rights reserved.</p>
+            <p style="margin: 5px 0 0 0;">
+              Questions? Contact us at <a href="mailto:hello@bidoro.africa" style="color: #1C341A;">hello@bidoro.africa</a>
+            </p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+  }
+
+  // New order notification to seller
+  async sendNewOrderNotificationEmail(data: {
+    name: string;
+    email: string;
+    orderNumber: string;
+    buyerName: string;
+    amount: number;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: `New Order Received - ${data.orderNumber} 💰`,
+        html: this.getNewOrderNotificationTemplate(data),
+        text: `Hi ${data.name},\n\nYou have a new order!\n\nOrder: ${data.orderNumber}\nBuyer: ${data.buyerName}\nAmount: ₦${data.amount.toLocaleString()}\n\nPlease prepare the item(s) for delivery.\n\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Seller notification email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Seller notification email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getNewOrderNotificationTemplate(data: {
+    name: string;
+    orderNumber: string;
+    buyerName: string;
+    amount: number;
+  }): string {
+    return `
+    <!DOCTYPE html>
+    <html>
+      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: #1C341A; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="color: white; margin: 0;">New Order! 💰</h1>
+        </div>
+        <div style="background: white; padding: 30px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
+          <p>Hi ${data.name},</p>
+          <p>Great news! You have received a new order.</p>
+          
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0 0 10px 0;"><strong>Order Number:</strong> ${data.orderNumber}</p>
+            <p style="margin: 0 0 10px 0;"><strong>Buyer:</strong> ${data.buyerName}</p>
+            <p style="margin: 0;"><strong>Your Earnings:</strong> ₦${data.amount.toLocaleString()}</p>
+          </div>
+
+          <div style="background: #fef3c7; border: 1px solid #f59e0b; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 0; color: #92400e; font-size: 14px;">
+              ⚠️ Please prepare the item(s) and arrange delivery/pickup with the buyer.
+            </p>
+          </div>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="https://bidoro.africa/seller/orders" 
+               style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+              View Order Details
+            </a>
+          </div>
+
+          <p>Thank you for selling on BIDORO!</p>
+          <p><strong>— The BIDORO Team</strong></p>
+        </div>
       </body>
     </html>
   `;

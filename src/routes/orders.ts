@@ -9,7 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { Response } from 'express';
-import { notificationService } from '../services/notification.service'; // ADD THIS
+import { notificationService } from '../services/notification.service';
 
 const router = Router();
 
@@ -22,22 +22,26 @@ const supabase = createClient(
 // Service fee percentage (2.5%)
 const SERVICE_FEE_PERCENTAGE = 0.025;
 
-// Valid status transitions
+// Valid status transitions - using actual DB values
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  new: ['active', 'cancelled'],
-  pending: ['active', 'cancelled'],
-  active: ['completed', 'disputed', 'cancelled'],
+  pending: ['confirmed', 'cancelled'],
+  confirmed: ['processing', 'shipped', 'delivered', 'cancelled', 'disputed'],
+  processing: ['shipped', 'delivered', 'cancelled', 'disputed'],
+  shipped: ['delivered', 'cancelled', 'disputed'],
+  delivered: ['completed', 'disputed'],
   completed: ['disputed'],
-  disputed: ['active', 'completed', 'cancelled'],
+  disputed: ['confirmed', 'completed', 'cancelled'],
   cancelled: []
 };
 
 // Default status messages
 const STATUS_MESSAGES: Record<string, string> = {
-  new: 'Order created',
-  pending: 'Order pending',
-  active: 'Order is being processed',
-  completed: 'Order has been completed',
+  pending: 'Order created and awaiting confirmation',
+  confirmed: 'Order confirmed and being processed',
+  processing: 'Order is being prepared',
+  shipped: 'Order has been shipped',
+  delivered: 'Order has been delivered',
+  completed: 'Order completed successfully',
   disputed: 'Dispute has been raised',
   cancelled: 'Order has been cancelled'
 };
@@ -64,12 +68,12 @@ async function sendOrderNotification(
   try {
     const notificationTemplates: Record<string, { title: string; message: string; type: 'info' | 'success' | 'warning' | 'error' }> = {
       // Buyer notifications
-      'buyer_new': {
+      'buyer_pending': {
         title: 'Order Placed Successfully',
         message: `Your order ${orderNumber} has been placed and is awaiting payment.`,
         type: 'success'
       },
-      'buyer_active': {
+      'buyer_confirmed': {
         title: 'Order Confirmed',
         message: `Your order ${orderNumber} has been confirmed and is being processed.`,
         type: 'success'
@@ -79,9 +83,14 @@ async function sendOrderNotification(
         message: `Your order ${orderNumber} has been shipped! Track your delivery.`,
         type: 'info'
       },
-      'buyer_completed': {
+      'buyer_delivered': {
         title: 'Order Delivered',
         message: `Your order ${orderNumber} has been delivered. Enjoy your purchase!`,
+        type: 'success'
+      },
+      'buyer_completed': {
+        title: 'Order Completed',
+        message: `Your order ${orderNumber} has been completed. Thank you for shopping!`,
         type: 'success'
       },
       'buyer_cancelled': {
@@ -94,14 +103,14 @@ async function sendOrderNotification(
         message: `A dispute has been raised for order ${orderNumber}. We'll resolve it soon.`,
         type: 'warning'
       },
-      
+
       // Seller notifications
-      'seller_new': {
+      'seller_pending': {
         title: 'New Order Received! 🎉',
         message: `You have a new order ${orderNumber}. Review and process it.`,
         type: 'success'
       },
-      'seller_active': {
+      'seller_confirmed': {
         title: 'Payment Confirmed',
         message: `Payment for order ${orderNumber} is now in escrow. Ship the item.`,
         type: 'success'
@@ -171,6 +180,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit as string)));
     const offset = (pageNum - 1) * limitNum;
 
+    // Build query based on view (seller or buyer)
     let query = supabase
       .from('orders')
       .select(`
@@ -202,30 +212,55 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         updated_at
       `, { count: 'exact' });
 
+    // Filter by user role (seller or buyer)
     if (view === 'seller') {
       query = query.eq('seller_id', userId);
     } else {
       query = query.eq('buyer_id', userId);
     }
 
+    // Filter by status - handle tab-to-db mapping
     if (status) {
-      query = query.eq('status', status);
+      const statusAliases: Record<string, string[]> = {
+        // Frontend tabs -> DB statuses
+        pending: ['pending'],
+        new: ['pending'],
+        active: ['confirmed', 'processing', 'shipped'],
+        confirmed: ['confirmed', 'processing', 'shipped'],
+        completed: ['delivered', 'completed'],
+        delivered: ['delivered', 'completed'],
+        disputed: ['disputed', 'cancelled'],
+        cancelled: ['cancelled']
+      };
+
+      const statusesToQuery = statusAliases[status as string] || [status as string];
+
+      if (statusesToQuery.length === 1) {
+        query = query.eq('status', statusesToQuery[0]);
+      } else {
+        query = query.in('status', statusesToQuery);
+      }
     }
 
+    // Search by order number
     if (search) {
       query = query.ilike('order_number', `%${search}%`);
     }
 
+    // Sorting
     const ascending = sortOrder === 'asc';
     query = query.order(sortBy as string, { ascending });
+
+    // Pagination
     query = query.range(offset, offset + limitNum - 1);
 
     const { data: orders, error, count } = await query;
 
     if (error) throw error;
 
+    // Get order items for each order
     const orderIds = orders?.map(o => o.order_id) || [];
-    
+
     let orderItems: any[] = [];
     if (orderIds.length > 0) {
       const { data: items } = await supabase
@@ -242,6 +277,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       itemsMap.set(item.order_id, items);
     });
 
+    // Get user profiles for participants
     const participantIds = new Set<string>();
     orders?.forEach(order => {
       participantIds.add(order.buyer_id);
@@ -259,6 +295,7 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     const profileMap = new Map(profiles.map(p => [p.user_id, p]));
 
+    // Format response
     const formattedOrders = orders?.map(order => {
       const buyerProfile = profileMap.get(order.buyer_id);
       const sellerProfile = profileMap.get(order.seller_id);
@@ -344,14 +381,16 @@ router.get('/stats', authenticateToken, async (req: AuthRequest, res: Response) 
   try {
     const userId = req.user!.id;
 
+    // Get current month boundaries
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
     const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59).toISOString();
 
+    // Fetch all stats in parallel
     const [
       totalOrdersRes,
-      newOrdersRes,
+      pendingOrdersRes,
       activeOrdersRes,
       completedOrdersRes,
       disputedOrdersRes,
@@ -359,32 +398,104 @@ router.get('/stats', authenticateToken, async (req: AuthRequest, res: Response) 
       currentMonthOrdersRes,
       lastMonthOrdersRes,
       currentMonthRevenueRes,
-      lastMonthRevenueRes
+      lastMonthRevenueRes,
+      activeProductsRes
     ] = await Promise.all([
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId),
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId).eq('status', 'new'),
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId).eq('status', 'active'),
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId).eq('status', 'completed'),
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId).eq('status', 'disputed'),
-      supabase.from('orders').select('escrow_amount').eq('seller_id', userId).eq('payment_status', 'in_escrow'),
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId).gte('created_at', startOfMonth),
-      supabase.from('orders').select('order_id', { count: 'exact', head: true }).eq('seller_id', userId).gte('created_at', startOfLastMonth).lte('created_at', endOfLastMonth),
-      supabase.from('orders').select('total_amount').eq('seller_id', userId).eq('status', 'completed').gte('created_at', startOfMonth),
-      supabase.from('orders').select('total_amount').eq('seller_id', userId).eq('status', 'completed').gte('created_at', startOfLastMonth).lte('created_at', endOfLastMonth)
+      // Total orders
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId),
+      // Pending orders (status = 'pending')
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .eq('status', 'pending'),
+      // Active orders (confirmed, processing, shipped)
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .in('status', ['confirmed', 'processing', 'shipped']),
+      // Completed orders (delivered, completed)
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .in('status', ['delivered', 'completed']),
+      // Disputed orders
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .eq('status', 'disputed'),
+      // Total in escrow (payment_status = 'paid' and order not completed)
+      supabase
+        .from('orders')
+        .select('escrow_amount, total_amount')
+        .eq('seller_id', userId)
+        .eq('payment_status', 'paid')
+        .in('status', ['confirmed', 'processing', 'shipped']),
+      // Current month orders
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .gte('created_at', startOfMonth),
+      // Last month orders
+      supabase
+        .from('orders')
+        .select('order_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .gte('created_at', startOfLastMonth)
+        .lte('created_at', endOfLastMonth),
+      // Current month revenue (completed orders)
+      supabase
+        .from('orders')
+        .select('total_amount')
+        .eq('seller_id', userId)
+        .in('status', ['delivered', 'completed'])
+        .gte('created_at', startOfMonth),
+      // Last month revenue
+      supabase
+        .from('orders')
+        .select('total_amount')
+        .eq('seller_id', userId)
+        .in('status', ['delivered', 'completed'])
+        .gte('created_at', startOfLastMonth)
+        .lte('created_at', endOfLastMonth),
+      // Active products count
+      supabase
+        .from('products')
+        .select('product_id', { count: 'exact', head: true })
+        .eq('seller_id', userId)
+        .eq('status', 'active')
     ]);
 
     const totalOrders = totalOrdersRes.count || 0;
-    const newOrders = newOrdersRes.count || 0;
+    const pendingOrders = pendingOrdersRes.count || 0;
     const activeOrders = activeOrdersRes.count || 0;
     const completedOrders = completedOrdersRes.count || 0;
     const disputedOrders = disputedOrdersRes.count || 0;
-    
-    const totalEscrowAmount = (escrowTotalRes.data || []).reduce((sum, o) => sum + (Number(o.escrow_amount) || 0), 0);
+    const activeProducts = activeProductsRes.count || 0;
+
+    const totalEscrowAmount = (escrowTotalRes.data || []).reduce(
+      (sum, o) => sum + (Number(o.escrow_amount) || Number(o.total_amount) || 0),
+      0
+    );
     const currentMonthOrders = currentMonthOrdersRes.count || 0;
     const lastMonthOrders = lastMonthOrdersRes.count || 0;
-    const currentMonthRevenue = (currentMonthRevenueRes.data || []).reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
-    const lastMonthRevenue = (lastMonthRevenueRes.data || []).reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    const currentMonthRevenue = (currentMonthRevenueRes.data || []).reduce(
+      (sum, o) => sum + (Number(o.total_amount) || 0),
+      0
+    );
+    const lastMonthRevenue = (lastMonthRevenueRes.data || []).reduce(
+      (sum, o) => sum + (Number(o.total_amount) || 0),
+      0
+    );
 
+    // Calculate percentage changes
     const ordersChange = lastMonthOrders > 0
       ? Math.round(((currentMonthOrders - lastMonthOrders) / lastMonthOrders) * 100)
       : 0;
@@ -393,45 +504,51 @@ router.get('/stats', authenticateToken, async (req: AuthRequest, res: Response) 
       ? Math.round(((currentMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
       : 0;
 
+    // Format for frontend StatCards
+    const formattedStats = {
+      raw: {
+        totalOrders,
+        pendingOrders,
+        activeOrders,
+        completedOrders,
+        disputedOrders,
+        totalEscrowAmount,
+        totalRevenue: currentMonthRevenue,
+        monthlyComparison: {
+          ordersChange,
+          revenueChange
+        }
+      },
+      cards: [
+        {
+          title: 'Amount in Escrow',
+          value: `₦${totalEscrowAmount.toLocaleString()}`,
+          change: `${Math.abs(revenueChange)}% than last month`,
+          trend: revenueChange >= 0 ? 'up' : 'down'
+        },
+        {
+          title: 'Pending Orders',
+          value: String(pendingOrders),
+          change: `${Math.abs(ordersChange)}% than last month`,
+          trend: ordersChange >= 0 ? 'up' : 'down'
+        },
+        {
+          title: 'Completed Orders',
+          value: String(completedOrders),
+          change: `${Math.abs(ordersChange)}% than last month`,
+          trend: ordersChange >= 0 ? 'up' : 'down'
+        },
+        {
+          title: 'Active Products',
+          value: String(activeProducts),
+          link: 'See all >'
+        }
+      ]
+    };
+
     res.json({
       success: true,
-      data: {
-        raw: {
-          totalOrders,
-          newOrders,
-          activeOrders,
-          completedOrders,
-          disputedOrders,
-          totalEscrowAmount,
-          totalRevenue: currentMonthRevenue,
-          monthlyComparison: { ordersChange, revenueChange }
-        },
-        cards: [
-          {
-            title: 'Amount in Escrow',
-            value: `₦ ${totalEscrowAmount.toLocaleString()}`,
-            change: `${Math.abs(revenueChange)}% than last month`,
-            trend: revenueChange >= 0 ? 'up' : 'down'
-          },
-          {
-            title: 'Pending orders',
-            value: String(newOrders + activeOrders),
-            change: `${Math.abs(ordersChange)}% than last month`,
-            trend: ordersChange >= 0 ? 'up' : 'down'
-          },
-          {
-            title: 'Completed orders',
-            value: String(completedOrders),
-            change: `${Math.abs(ordersChange)}% than last month`,
-            trend: ordersChange >= 0 ? 'up' : 'down'
-          },
-          {
-            title: 'Active products',
-            value: String(activeOrders),
-            link: 'See all >'
-          }
-        ]
-      }
+      data: formattedStats
     });
   } catch (error: any) {
     console.error('Error fetching order stats:', error);
@@ -451,6 +568,7 @@ router.get('/:orderId', authenticateToken, async (req: AuthRequest, res: Respons
     const { orderId } = req.params;
     const userId = req.user!.id;
 
+    // Get order
     const { data: order, error } = await supabase
       .from('orders')
       .select('*')
@@ -464,6 +582,7 @@ router.get('/:orderId', authenticateToken, async (req: AuthRequest, res: Respons
       });
     }
 
+    // Verify user is participant
     if (order.buyer_id !== userId && order.seller_id !== userId) {
       return res.status(403).json({
         success: false,
@@ -471,23 +590,27 @@ router.get('/:orderId', authenticateToken, async (req: AuthRequest, res: Respons
       });
     }
 
+    // Get order items
     const { data: items } = await supabase
       .from('order_items')
       .select('*')
       .eq('order_id', orderId);
 
+    // Get timeline if exists
     const { data: timeline } = await supabase
       .from('order_timeline')
       .select('*')
       .eq('order_id', orderId)
       .order('created_at', { ascending: true });
 
+    // Get dispute if exists
     const { data: dispute } = await supabase
       .from('order_disputes')
       .select('*')
       .eq('order_id', orderId)
       .maybeSingle();
 
+    // Get user profiles
     const { data: profiles } = await supabase
       .from('users')
       .select('user_id, name, email, profile_picture, phone')
@@ -589,6 +712,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       notes
     } = req.body;
 
+    // Validate required fields
     if (!sellerId || !items || !items.length || !shippingAddress) {
       return res.status(400).json({
         success: false,
@@ -596,6 +720,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // Validate items
     for (const item of items) {
       if (!item.productId || !item.productName || !item.quantity || !item.unitPrice) {
         return res.status(400).json({
@@ -605,6 +730,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Calculate totals
     const subtotal = items.reduce(
       (sum: number, item: any) => sum + item.quantity * item.unitPrice,
       0
@@ -612,6 +738,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const serviceFee = Math.round(subtotal * SERVICE_FEE_PERCENTAGE);
     const totalAmount = subtotal + shippingFee + serviceFee;
 
+    // Create order
     const orderId = uuidv4();
     const orderNumber = generateOrderNumber();
 
@@ -622,7 +749,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         order_number: orderNumber,
         buyer_id: buyerId,
         seller_id: sellerId,
-        status: 'new',
+        status: 'pending',
         payment_status: 'pending',
         subtotal,
         shipping_fee: shippingFee,
@@ -645,6 +772,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     if (orderError) throw orderError;
 
+    // Insert order items
     const orderItems = items.map((item: any) => ({
       item_id: uuidv4(),
       order_id: orderId,
@@ -657,12 +785,19 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       created_at: new Date().toISOString()
     }));
 
-    await supabase.from('order_items').insert(orderItems);
+    const { error: itemsError } = await supabase
+      .from('order_items')
+      .insert(orderItems);
 
+    if (itemsError) {
+      console.error('Error inserting order items:', itemsError);
+    }
+
+    // Add initial timeline event
     await supabase.from('order_timeline').insert({
       event_id: uuidv4(),
       order_id: orderId,
-      status: 'new',
+      status: 'pending',
       message: 'Order created and awaiting payment',
       updated_by: buyerId,
       created_at: new Date().toISOString()
@@ -672,14 +807,14 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // SEND NOTIFICATIONS
     // =============================================
     // Notify buyer
-    await sendOrderNotification(buyerId, orderNumber, 'new', 'buyer', { 
-      orderId, 
-      totalAmount 
+    await sendOrderNotification(buyerId, orderNumber, 'pending', 'buyer', {
+      orderId,
+      totalAmount
     });
 
     // Notify seller
-    await sendOrderNotification(sellerId, orderNumber, 'new', 'seller', { 
-      orderId, 
+    await sendOrderNotification(sellerId, orderNumber, 'pending', 'seller', {
+      orderId,
       totalAmount,
       itemCount: items.length
     });
@@ -713,6 +848,7 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
     const userId = req.user!.id;
     const { action, ...data } = req.body;
 
+    // Get current order
     const { data: order, error: fetchError } = await supabase
       .from('orders')
       .select('*')
@@ -726,6 +862,7 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
       });
     }
 
+    // Verify user is participant
     if (order.buyer_id !== userId && order.seller_id !== userId) {
       return res.status(403).json({
         success: false,
@@ -747,20 +884,59 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
           });
         }
 
-        const currentStatus = order.status || 'new';
-        if (VALID_TRANSITIONS[currentStatus] && !VALID_TRANSITIONS[currentStatus].includes(status)) {
+        // Map frontend status to database-allowed values
+        const frontendToDbStatus: Record<string, string> = {
+          new: 'pending',
+          active: 'confirmed',
+          processing: 'processing',
+          shipped: 'shipped',
+          completed: 'delivered',
+          delivered: 'delivered',
+          cancelled: 'cancelled',
+          disputed: 'disputed',
+          // Also allow direct DB values
+          pending: 'pending',
+          confirmed: 'confirmed'
+        };
+
+        const dbStatus = frontendToDbStatus[status] || status;
+
+        // Validate the status is allowed by the database
+        const allowedStatuses = [
+          'pending',
+          'confirmed',
+          'processing',
+          'shipped',
+          'delivered',
+          'completed',
+          'cancelled',
+          'disputed'
+        ];
+        
+        if (!allowedStatuses.includes(dbStatus)) {
           return res.status(400).json({
             success: false,
-            message: `Invalid status transition from ${currentStatus} to ${status}`
+            message: `Invalid status: ${status}. Allowed values: ${allowedStatuses.join(', ')}`
+          });
+        }
+
+        const currentStatus = order.status || 'pending';
+
+        // Check valid transitions
+        if (VALID_TRANSITIONS[currentStatus] && !VALID_TRANSITIONS[currentStatus].includes(dbStatus)) {
+          return res.status(400).json({
+            success: false,
+            message: `Cannot change status from "${currentStatus}" to "${dbStatus}"`
           });
         }
 
         const updateData: any = {
-          status,
+          status: dbStatus,
           updated_at: new Date().toISOString()
         };
 
-        if (status === 'completed') {
+        // Set delivery timestamps when appropriate
+        if (dbStatus === 'delivered') {
           updateData.delivered_at = new Date().toISOString();
           updateData.actual_delivery = new Date().toISOString();
         }
@@ -774,11 +950,12 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
 
         if (error) throw error;
 
+        // Add timeline event
         await supabase.from('order_timeline').insert({
           event_id: uuidv4(),
           order_id: orderId,
-          status,
-          message: message || STATUS_MESSAGES[status] || `Status changed to ${status}`,
+          status: dbStatus,
+          message: message || STATUS_MESSAGES[dbStatus] || `Status changed to ${dbStatus}`,
           updated_by: userId,
           created_at: new Date().toISOString()
         });
@@ -786,12 +963,11 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         // =============================================
         // SEND STATUS UPDATE NOTIFICATIONS
         // =============================================
-        // Notify buyer
-        await sendOrderNotification(order.buyer_id, order.order_number, status, 'buyer', { orderId });
-        
+        await sendOrderNotification(order.buyer_id, order.order_number, dbStatus, 'buyer', { orderId });
+
         // Notify seller (if status change was by buyer)
         if (isBuyer) {
-          await sendOrderNotification(order.seller_id, order.order_number, status, 'seller', { orderId });
+          await sendOrderNotification(order.seller_id, order.order_number, dbStatus, 'seller', { orderId });
         }
 
         result = updatedOrder;
@@ -818,10 +994,10 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         const { data: updatedOrder, error } = await supabase
           .from('orders')
           .update({
-            payment_status: 'in_escrow',
+            payment_status: 'paid',
             payment_reference: paymentReference,
             escrow_amount: order.total_amount,
-            status: 'active',
+            status: 'confirmed',
             updated_at: new Date().toISOString()
           })
           .eq('order_id', orderId)
@@ -833,7 +1009,7 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         await supabase.from('order_timeline').insert({
           event_id: uuidv4(),
           order_id: orderId,
-          status: 'active',
+          status: 'confirmed',
           message: 'Payment confirmed. Funds held in escrow.',
           updated_by: userId,
           created_at: new Date().toISOString()
@@ -842,22 +1018,22 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         // =============================================
         // SEND PAYMENT CONFIRMATION NOTIFICATIONS
         // =============================================
-        await sendOrderNotification(order.buyer_id, order.order_number, 'active', 'buyer', { orderId });
-        await sendOrderNotification(order.seller_id, order.order_number, 'active', 'seller', { orderId });
+        await sendOrderNotification(order.buyer_id, order.order_number, 'confirmed', 'buyer', { orderId });
+        await sendOrderNotification(order.seller_id, order.order_number, 'confirmed', 'seller', { orderId });
 
         result = updatedOrder;
         break;
       }
 
       case 'releaseEscrow': {
-        if (order.status !== 'completed') {
+        if (!['delivered', 'completed'].includes(order.status)) {
           return res.status(400).json({
             success: false,
-            message: 'Order must be completed before releasing escrow'
+            message: 'Order must be delivered or completed before releasing escrow'
           });
         }
 
-        if (order.payment_status !== 'in_escrow') {
+        if (order.payment_status !== 'paid') {
           return res.status(400).json({
             success: false,
             message: 'Escrow already released or not in escrow'
@@ -889,9 +1065,9 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         // =============================================
         // SEND ESCROW RELEASED NOTIFICATION TO SELLER
         // =============================================
-        await sendOrderNotification(order.seller_id, order.order_number, 'escrow_released', 'seller', { 
-          orderId, 
-          amount: order.total_amount 
+        await sendOrderNotification(order.seller_id, order.order_number, 'escrow_released', 'seller', {
+          orderId,
+          amount: order.total_amount
         });
 
         result = updatedOrder;
@@ -913,6 +1089,7 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
           .update({
             tracking_number: trackingNumber,
             estimated_delivery: estimatedDelivery || null,
+            status: 'shipped',
             updated_at: new Date().toISOString()
           })
           .eq('order_id', orderId)
@@ -924,7 +1101,7 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         await supabase.from('order_timeline').insert({
           event_id: uuidv4(),
           order_id: orderId,
-          status: order.status,
+          status: 'shipped',
           message: `Tracking information added: ${trackingNumber}`,
           updated_by: userId,
           created_at: new Date().toISOString()
@@ -933,9 +1110,9 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
         // =============================================
         // SEND SHIPPING NOTIFICATION TO BUYER
         // =============================================
-        await sendOrderNotification(order.buyer_id, order.order_number, 'shipped', 'buyer', { 
-          orderId, 
-          trackingNumber 
+        await sendOrderNotification(order.buyer_id, order.order_number, 'shipped', 'buyer', {
+          orderId,
+          trackingNumber
         });
 
         result = updatedOrder;
@@ -1052,7 +1229,9 @@ router.patch('/:orderId', authenticateToken, async (req: AuthRequest, res: Respo
           created_at: new Date().toISOString()
         });
 
-        // Notify both parties of resolution
+        // =============================================
+        // NOTIFY BOTH PARTIES OF RESOLUTION
+        // =============================================
         await notificationService.createNotification({
           user_id: order.buyer_id,
           title: 'Dispute Resolved',

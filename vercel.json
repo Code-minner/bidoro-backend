@@ -12,10 +12,10 @@
       "dest": "src/app.ts"
     }
   ],
-    "crons": [
+  "crons": [
     {
       "path": "/api/cron/auctions",
-      "schedule": "* * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

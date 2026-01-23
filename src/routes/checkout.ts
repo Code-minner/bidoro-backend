@@ -4,6 +4,7 @@ import { Router, Response } from "express";
 import { supabaseAdmin as supabase } from "../config/database";
 import { authenticateToken, AuthRequest } from "../middleware/auth";
 import { paystackService } from "../services/paystackService";
+import { emailService } from "../services/emailService";
 
 const router = Router();
 
@@ -37,7 +38,7 @@ const getPlatformSettings = async () => {
 // Helper: Calculate service fee
 const calculateServiceFee = (
   subtotal: number,
-  settings: { serviceFeePercent: number; minServiceFee: number },
+  settings: { serviceFeePercent: number; minServiceFee: number }
 ) => {
   const percentageFee = (subtotal * settings.serviceFeePercent) / 100;
   return Math.max(percentageFee, settings.minServiceFee);
@@ -45,7 +46,6 @@ const calculateServiceFee = (
 
 /**
  * GET /api/checkout/summary
- * Get checkout summary with calculated fees
  */
 router.get(
   "/summary",
@@ -54,7 +54,6 @@ router.get(
     try {
       const userId = req.user!.id;
 
-      // Get cart items
       const { data: cartItems, error: cartError } = await supabase
         .from("cart_items")
         .select("product_id, quantity, pay_for_delivery")
@@ -69,7 +68,6 @@ router.get(
         });
       }
 
-      // Get product details
       let subtotal = 0;
       let deliveryFee = 0;
       const items = [];
@@ -77,8 +75,7 @@ router.get(
       for (const item of cartItems) {
         const { data: product, error: productError } = await supabase
           .from("products")
-          .select(
-            `
+          .select(`
             product_id, 
             name, 
             price, 
@@ -86,17 +83,14 @@ router.get(
             product_images (
               image_url
             )
-          `,
-          )
+          `)
           .eq("product_id", item.product_id)
           .single();
 
         if (productError || !product) continue;
 
         const itemSubtotal = product.price * item.quantity;
-        const itemDeliveryFee = item.pay_for_delivery
-          ? DEFAULT_DELIVERY_FEE
-          : 0;
+        const itemDeliveryFee = item.pay_for_delivery ? DEFAULT_DELIVERY_FEE : 0;
 
         subtotal += itemSubtotal;
         deliveryFee += itemDeliveryFee;
@@ -107,20 +101,17 @@ router.get(
           price: product.price,
           quantity: item.quantity,
           subtotal: itemSubtotal,
-          imageUrl:
-            product.product_images?.[0]?.image_url || "/assets/product.png",
+          imageUrl: product.product_images?.[0]?.image_url || "/assets/product.png",
           sellerId: product.seller_id,
           payForDelivery: item.pay_for_delivery,
           deliveryFee: itemDeliveryFee,
         });
       }
 
-      // Calculate service fee
       const settings = await getPlatformSettings();
       const serviceFee = calculateServiceFee(subtotal, settings);
       const totalAmount = subtotal + serviceFee + deliveryFee;
 
-      // Get default address
       const { data: defaultAddress } = await supabase
         .from("delivery_addresses")
         .select("*")
@@ -147,12 +138,11 @@ router.get(
         message: "Failed to get checkout summary",
       });
     }
-  },
+  }
 );
 
 /**
  * POST /api/checkout/create-order
- * Create order and initialize payment
  */
 router.post(
   "/create-order",
@@ -162,7 +152,6 @@ router.post(
       const userId = req.user!.id;
       const { addressId, paymentMethod = "card" } = req.body;
 
-      // Get user email
       const { data: user } = await supabase
         .from("users")
         .select("email, name")
@@ -176,7 +165,6 @@ router.post(
         });
       }
 
-      // Get delivery address
       let deliveryAddress;
       if (addressId) {
         const { data } = await supabase
@@ -187,7 +175,6 @@ router.post(
           .single();
         deliveryAddress = data;
       } else {
-        // Get default address
         const { data } = await supabase
           .from("delivery_addresses")
           .select("*")
@@ -204,7 +191,6 @@ router.post(
         });
       }
 
-      // Get cart items
       const { data: cartItems, error: cartError } = await supabase
         .from("cart_items")
         .select("product_id, quantity, pay_for_delivery")
@@ -221,7 +207,6 @@ router.post(
         });
       }
 
-      // Calculate totals and prepare order items
       let subtotal = 0;
       let deliveryFee = 0;
       const orderItems: any[] = [];
@@ -230,8 +215,7 @@ router.post(
       for (const item of cartItems) {
         const { data: product, error: productError } = await supabase
           .from("products")
-          .select(
-            `
+          .select(`
             product_id, 
             name, 
             price, 
@@ -240,19 +224,16 @@ router.post(
             product_images (
               image_url
             )
-          `,
-          )
+          `)
           .eq("product_id", item.product_id)
           .single();
 
         if (productError || !product) continue;
 
-        // Track first seller for the order
         if (!firstSellerId) {
           firstSellerId = product.seller_id;
         }
 
-        // Check stock
         if (
           product.stock_quantity !== null &&
           product.stock_quantity < item.quantity
@@ -264,9 +245,7 @@ router.post(
         }
 
         const itemSubtotal = product.price * item.quantity;
-        const itemDeliveryFee = item.pay_for_delivery
-          ? DEFAULT_DELIVERY_FEE
-          : 0;
+        const itemDeliveryFee = item.pay_for_delivery ? DEFAULT_DELIVERY_FEE : 0;
 
         subtotal += itemSubtotal;
         deliveryFee += itemDeliveryFee;
@@ -282,7 +261,6 @@ router.post(
           total_price: itemSubtotal,
           pay_for_delivery: item.pay_for_delivery,
           delivery_fee: itemDeliveryFee,
-          // ADD THIS - product snapshot for order history
           product_snapshot: {
             product_id: product.product_id,
             name: product.name,
@@ -291,10 +269,8 @@ router.post(
             seller_id: product.seller_id,
           },
         });
-        
       }
 
-      // Check if we have any valid items
       if (orderItems.length === 0 || !firstSellerId) {
         return res.status(400).json({
           success: false,
@@ -302,28 +278,18 @@ router.post(
         });
       }
 
-      // Calculate service fee
       const settings = await getPlatformSettings();
       const serviceFee = calculateServiceFee(subtotal, settings);
       const totalAmount = subtotal + serviceFee + deliveryFee;
-
-      // Calculate escrow amount (total minus platform fee)
       const escrowAmount = subtotal + deliveryFee;
-
-      // Generate order number
       const orderNumber = generateOrderNumber();
 
       console.log(`\n=== CREATING ORDER ${orderNumber} ===`);
       console.log(`Buyer: ${userId}`);
       console.log(`Items: ${orderItems.length}`);
       console.log(`Seller: ${firstSellerId}`);
-      console.log(`Subtotal: ₦${subtotal}`);
-      console.log(`Service Fee: ₦${serviceFee}`);
-      console.log(`Delivery Fee: ₦${deliveryFee}`);
-      console.log(`Escrow Amount: ₦${escrowAmount}`);
       console.log(`Total: ₦${totalAmount}`);
 
-      // Build shipping_address JSONB object
       const shippingAddress = {
         name: deliveryAddress.name,
         phone: deliveryAddress.phone_number,
@@ -333,21 +299,17 @@ router.post(
         additional_info: deliveryAddress.additional_info || null,
       };
 
-      // Create order with correct column names
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .insert({
           order_number: orderNumber,
           buyer_id: userId,
           seller_id: firstSellerId,
-          // Required JSONB field
           shipping_address: shippingAddress,
-          // Amounts (required)
           subtotal,
           total_amount: totalAmount,
           service_fee: serviceFee,
           escrow_amount: escrowAmount,
-          // Optional fields
           shipping_fee: deliveryFee,
           delivery_fee: deliveryFee,
           tax_amount: 0,
@@ -356,7 +318,6 @@ router.post(
           payment_method: paymentMethod,
           status: "pending",
           payment_status: "pending",
-          // Delivery info (optional but useful)
           delivery_name: deliveryAddress.name,
           delivery_phone: deliveryAddress.phone_number,
           delivery_address: deliveryAddress.address,
@@ -375,7 +336,6 @@ router.post(
 
       console.log(`✅ Order created: ${order.order_id}`);
 
-      // Create order items
       const orderItemsWithOrderId = orderItems.map((item) => ({
         ...item,
         order_id: order.order_id,
@@ -392,12 +352,11 @@ router.post(
 
       console.log(`✅ Order items created: ${orderItems.length}`);
 
-      // Initialize Paystack payment
       const paystackReference = `ORDER-${orderNumber}-${Date.now()}`;
 
       const paymentResult = await paystackService.initializeTransaction({
         email: user.email,
-        amount: Math.round(totalAmount * 100), // Paystack uses kobo
+        amount: Math.round(totalAmount * 100),
         reference: paystackReference,
         metadata: {
           order_id: order.order_id,
@@ -415,12 +374,10 @@ router.post(
       });
 
       if (!paymentResult.success) {
-        // Delete order if payment init fails
         await supabase.from("orders").delete().eq("order_id", order.order_id);
         throw new Error("Failed to initialize payment");
       }
 
-      // Update order with Paystack reference
       await supabase
         .from("orders")
         .update({ payment_reference: paystackReference })
@@ -447,12 +404,12 @@ router.post(
         message: error.message || "Failed to create order",
       });
     }
-  },
+  }
 );
 
 /**
  * GET /api/checkout/verify/:reference
- * Verify payment and complete order
+ * Verify payment and complete order - THIS IS WHERE EMAILS GO
  */
 router.get(
   "/verify/:reference",
@@ -464,7 +421,6 @@ router.get(
 
       console.log(`\n=== VERIFYING PAYMENT ${reference} ===`);
 
-      // Verify with Paystack
       const verifyResult = await paystackService.verifyTransaction(reference);
 
       if (!verifyResult.success) {
@@ -483,7 +439,6 @@ router.get(
         });
       }
 
-      // Get order
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .select("*")
@@ -498,7 +453,6 @@ router.get(
         });
       }
 
-      // Check if already processed
       if (order.payment_status === "paid") {
         return res.json({
           success: true,
@@ -513,7 +467,6 @@ router.get(
 
       console.log(`✅ Payment verified for order: ${order.order_number}`);
 
-      // Update order status
       const { error: updateError } = await supabase
         .from("orders")
         .update({
@@ -526,26 +479,22 @@ router.get(
 
       if (updateError) throw updateError;
 
-      // Get order items
       const { data: orderItems } = await supabase
         .from("order_items")
         .select("*")
         .eq("order_id", order.order_id);
 
       // Create escrow transactions for each seller
-      const sellerAmounts: Record<string, { amount: number; items: any[] }> =
-        {};
+      const sellerAmounts: Record<string, { amount: number; items: any[] }> = {};
 
       for (const item of orderItems || []) {
         if (!sellerAmounts[item.seller_id]) {
           sellerAmounts[item.seller_id] = { amount: 0, items: [] };
         }
-        sellerAmounts[item.seller_id].amount +=
-          item.subtotal + (item.delivery_fee || 0);
+        sellerAmounts[item.seller_id].amount += item.subtotal + (item.delivery_fee || 0);
         sellerAmounts[item.seller_id].items.push(item);
       }
 
-      // Create escrow for each seller
       for (const [sellerId, data] of Object.entries(sellerAmounts)) {
         const platformFeePercent = 5;
         const platformFee = (data.amount * platformFeePercent) / 100;
@@ -562,9 +511,7 @@ router.get(
             seller_amount: sellerAmount,
             status: "escrow_held",
             paystack_reference: reference,
-            auto_release_at: new Date(
-              Date.now() + 5 * 24 * 60 * 60 * 1000,
-            ).toISOString(),
+            auto_release_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
           })
           .select()
           .single();
@@ -572,11 +519,8 @@ router.get(
         if (escrowError) {
           console.error("Escrow creation error:", escrowError);
         } else {
-          console.log(
-            `✅ Escrow created for seller ${sellerId}: ₦${sellerAmount}`,
-          );
+          console.log(`✅ Escrow created for seller ${sellerId}: ₦${sellerAmount}`);
 
-          // Update order items with escrow ID
           for (const item of data.items) {
             await supabase
               .from("order_items")
@@ -599,8 +543,53 @@ router.get(
 
       // Clear user's cart
       await supabase.from("cart_items").delete().eq("user_id", userId);
-
       console.log(`✅ Cart cleared for user ${userId}`);
+
+      // ============ SEND CONFIRMATION EMAILS ============
+      try {
+        // Get buyer info
+        const { data: buyer } = await supabase
+          .from("users")
+          .select("email, name")
+          .eq("user_id", userId)
+          .single();
+
+        if (buyer?.email) {
+          await emailService.sendOrderConfirmationEmail({
+            name: buyer.name || "Customer",
+            email: buyer.email,
+            orderNumber: order.order_number,
+            totalAmount: order.total_amount,
+            items: orderItems || [],
+          });
+          console.log(`✅ Confirmation email sent to buyer: ${buyer.email}`);
+        }
+
+        // Notify seller(s)
+        for (const sellerId of Object.keys(sellerAmounts)) {
+          const { data: seller } = await supabase
+            .from("users")
+            .select("email, name")
+            .eq("user_id", sellerId)
+            .single();
+
+          if (seller?.email) {
+            await emailService.sendNewOrderNotificationEmail({
+              name: seller.name || "Seller",
+              email: seller.email,
+              orderNumber: order.order_number,
+              buyerName: buyer?.name || "A customer",
+              amount: sellerAmounts[sellerId].amount,
+            });
+            console.log(`✅ Order notification sent to seller: ${seller.email}`);
+          }
+        }
+      } catch (emailError) {
+        console.error("Email sending failed:", emailError);
+        // Don't fail the request if email fails
+      }
+      // ============ END EMAIL SECTION ============
+
       console.log(`=== PAYMENT VERIFICATION COMPLETED ===\n`);
 
       res.json({
@@ -619,12 +608,11 @@ router.get(
         message: error.message || "Payment verification failed",
       });
     }
-  },
+  }
 );
 
 /**
  * GET /api/checkout/order/:orderId
- * Get order details
  */
 router.get(
   "/order/:orderId",
@@ -636,12 +624,10 @@ router.get(
 
       const { data: order, error } = await supabase
         .from("orders")
-        .select(
-          `
+        .select(`
           *,
           order_items(*)
-        `,
-        )
+        `)
         .eq("order_id", orderId)
         .eq("buyer_id", userId)
         .single();
@@ -664,7 +650,7 @@ router.get(
         message: "Failed to get order",
       });
     }
-  },
+  }
 );
 
 export default router;
