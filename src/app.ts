@@ -40,6 +40,7 @@ import checkoutRoutes from './routes/checkout';
 
 
 
+import notificationRoutes from './routes/notification.routes';
 
 
 
@@ -125,6 +126,7 @@ app.use('/api/feedbacks', sellerFeedbacksRoutes);
 
 app.use('/api/referral', referralRoutes);
 
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/cron', cronRoutes);  // <-- ADD THIS LINE
 
 app.use('/api/user/addresses', deliveryAddressRoutes);
