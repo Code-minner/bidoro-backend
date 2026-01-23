@@ -31,6 +31,7 @@ import auctionRoutes from './routes/auctions';
 import sellerFeedbacksRoutes from './routes/sellerFeedbacks';
 import referralRoutes from './routes/referral.routes';
 
+import notificationRoutes from './routes/notification.routes';
 
 
 
@@ -114,6 +115,8 @@ app.use('/api/auctions', auctionRoutes);
 app.use('/api/feedbacks', sellerFeedbacksRoutes);
 
 app.use('/api/referral', referralRoutes);
+
+app.use('/api/notifications', notificationRoutes);
 
 // ====================
 // Global error handler
