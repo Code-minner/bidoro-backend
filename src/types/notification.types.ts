@@ -3,7 +3,9 @@
 // Location: backend/types/notification.types.ts
 // =============================================
 
-export type NotificationCategory = 'orders' | 'promotions' | 'account' | 'support' | 'referral';
+// Add 'messages' to the category list
+export type NotificationCategory = 'orders' | 'promotions' | 'account' | 'support' | 'referral' | 'messages';
+
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
 export interface Notification {
@@ -47,24 +49,29 @@ export interface NotificationListResponse {
   };
 }
 
+export interface GroupedNotifications {
+  recent: Notification[];
+  thisWeek: Notification[];
+  earlier: Notification[];
+}
+
 export interface NotificationPreferences {
   id: string;
   user_id: string;
-  email_orders: boolean;
-  email_promotions: boolean;
-  email_account: boolean;
-  email_support: boolean;
-  email_referral: boolean;
-  push_orders: boolean;
-  push_promotions: boolean;
-  push_account: boolean;
-  push_support: boolean;
-  push_referral: boolean;
-}
-
-// Grouped notifications for frontend
-export interface GroupedNotifications {
-  recent: Notification[];      // Last 24 hours
-  thisWeek: Notification[];    // Last 7 days
-  earlier: Notification[];     // Older
+  
+  // Notification type settings
+  bidding: boolean;
+  new_order: boolean;
+  messages: boolean;
+  new_rating: boolean;
+  feedback: boolean;
+  wallet_withdrawal: boolean;
+  
+  // Delivery method settings
+  web_notification: boolean;
+  email_notification: boolean;
+  sms_notification: boolean;
+  
+  created_at: string;
+  updated_at: string;
 }
