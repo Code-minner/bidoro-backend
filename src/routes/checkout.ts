@@ -1,0 +1,670 @@
+// src/routes/checkout.ts
+
+import { Router, Response } from "express";
+import { supabaseAdmin as supabase } from "../config/database";
+import { authenticateToken, AuthRequest } from "../middleware/auth";
+import { paystackService } from "../services/paystackService";
+
+const router = Router();
+
+// Default delivery fee
+const DEFAULT_DELIVERY_FEE = 2000;
+
+// Helper: Generate order number
+const generateOrderNumber = (): string => {
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `BID-${timestamp}-${random}`;
+};
+
+// Helper: Get platform settings
+const getPlatformSettings = async () => {
+  const { data } = await supabase
+    .from("platform_settings")
+    .select("key, value");
+
+  const settings: Record<string, string> = {};
+  data?.forEach((item) => {
+    settings[item.key] = item.value;
+  });
+
+  return {
+    serviceFeePercent: parseFloat(settings.service_fee_percent || "5"),
+    minServiceFee: parseFloat(settings.min_service_fee || "500"),
+  };
+};
+
+// Helper: Calculate service fee
+const calculateServiceFee = (
+  subtotal: number,
+  settings: { serviceFeePercent: number; minServiceFee: number },
+) => {
+  const percentageFee = (subtotal * settings.serviceFeePercent) / 100;
+  return Math.max(percentageFee, settings.minServiceFee);
+};
+
+/**
+ * GET /api/checkout/summary
+ * Get checkout summary with calculated fees
+ */
+router.get(
+  "/summary",
+  authenticateToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+
+      // Get cart items
+      const { data: cartItems, error: cartError } = await supabase
+        .from("cart_items")
+        .select("product_id, quantity, pay_for_delivery")
+        .eq("user_id", userId);
+
+      if (cartError) throw cartError;
+
+      if (!cartItems || cartItems.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Cart is empty",
+        });
+      }
+
+      // Get product details
+      let subtotal = 0;
+      let deliveryFee = 0;
+      const items = [];
+
+      for (const item of cartItems) {
+        const { data: product, error: productError } = await supabase
+          .from("products")
+          .select(
+            `
+            product_id, 
+            name, 
+            price, 
+            seller_id,
+            product_images (
+              image_url
+            )
+          `,
+          )
+          .eq("product_id", item.product_id)
+          .single();
+
+        if (productError || !product) continue;
+
+        const itemSubtotal = product.price * item.quantity;
+        const itemDeliveryFee = item.pay_for_delivery
+          ? DEFAULT_DELIVERY_FEE
+          : 0;
+
+        subtotal += itemSubtotal;
+        deliveryFee += itemDeliveryFee;
+
+        items.push({
+          productId: product.product_id,
+          productName: product.name,
+          price: product.price,
+          quantity: item.quantity,
+          subtotal: itemSubtotal,
+          imageUrl:
+            product.product_images?.[0]?.image_url || "/assets/product.png",
+          sellerId: product.seller_id,
+          payForDelivery: item.pay_for_delivery,
+          deliveryFee: itemDeliveryFee,
+        });
+      }
+
+      // Calculate service fee
+      const settings = await getPlatformSettings();
+      const serviceFee = calculateServiceFee(subtotal, settings);
+      const totalAmount = subtotal + serviceFee + deliveryFee;
+
+      // Get default address
+      const { data: defaultAddress } = await supabase
+        .from("delivery_addresses")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_default", true)
+        .single();
+
+      res.json({
+        success: true,
+        data: {
+          items,
+          subtotal,
+          serviceFee,
+          deliveryFee,
+          totalAmount,
+          itemCount: items.length,
+          defaultAddress: defaultAddress || null,
+        },
+      });
+    } catch (error) {
+      console.error("Get checkout summary error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get checkout summary",
+      });
+    }
+  },
+);
+
+/**
+ * POST /api/checkout/create-order
+ * Create order and initialize payment
+ */
+router.post(
+  "/create-order",
+  authenticateToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { addressId, paymentMethod = "card" } = req.body;
+
+      // Get user email
+      const { data: user } = await supabase
+        .from("users")
+        .select("email, name")
+        .eq("user_id", userId)
+        .single();
+
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // Get delivery address
+      let deliveryAddress;
+      if (addressId) {
+        const { data } = await supabase
+          .from("delivery_addresses")
+          .select("*")
+          .eq("id", addressId)
+          .eq("user_id", userId)
+          .single();
+        deliveryAddress = data;
+      } else {
+        // Get default address
+        const { data } = await supabase
+          .from("delivery_addresses")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("is_default", true)
+          .single();
+        deliveryAddress = data;
+      }
+
+      if (!deliveryAddress) {
+        return res.status(400).json({
+          success: false,
+          message: "Please add a delivery address",
+        });
+      }
+
+      // Get cart items
+      const { data: cartItems, error: cartError } = await supabase
+        .from("cart_items")
+        .select("product_id, quantity, pay_for_delivery")
+        .eq("user_id", userId);
+
+      console.log("🛒 Cart items found:", cartItems?.length || 0);
+
+      if (cartError) throw cartError;
+
+      if (!cartItems || cartItems.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Cart is empty",
+        });
+      }
+
+      // Calculate totals and prepare order items
+      let subtotal = 0;
+      let deliveryFee = 0;
+      const orderItems: any[] = [];
+      let firstSellerId: string | null = null;
+
+      for (const item of cartItems) {
+        const { data: product, error: productError } = await supabase
+          .from("products")
+          .select(
+            `
+            product_id, 
+            name, 
+            price, 
+            seller_id, 
+            stock_quantity,
+            product_images (
+              image_url
+            )
+          `,
+          )
+          .eq("product_id", item.product_id)
+          .single();
+
+        if (productError || !product) continue;
+
+        // Track first seller for the order
+        if (!firstSellerId) {
+          firstSellerId = product.seller_id;
+        }
+
+        // Check stock
+        if (
+          product.stock_quantity !== null &&
+          product.stock_quantity < item.quantity
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: `${product.name} only has ${product.stock_quantity} items in stock`,
+          });
+        }
+
+        const itemSubtotal = product.price * item.quantity;
+        const itemDeliveryFee = item.pay_for_delivery
+          ? DEFAULT_DELIVERY_FEE
+          : 0;
+
+        subtotal += itemSubtotal;
+        deliveryFee += itemDeliveryFee;
+
+        orderItems.push({
+          product_id: product.product_id,
+          seller_id: product.seller_id,
+          product_name: product.name,
+          product_image: product.product_images?.[0]?.image_url || null,
+          unit_price: product.price,
+          quantity: item.quantity,
+          subtotal: itemSubtotal,
+          total_price: itemSubtotal,
+          pay_for_delivery: item.pay_for_delivery,
+          delivery_fee: itemDeliveryFee,
+          // ADD THIS - product snapshot for order history
+          product_snapshot: {
+            product_id: product.product_id,
+            name: product.name,
+            price: product.price,
+            image: product.product_images?.[0]?.image_url || null,
+            seller_id: product.seller_id,
+          },
+        });
+        
+      }
+
+      // Check if we have any valid items
+      if (orderItems.length === 0 || !firstSellerId) {
+        return res.status(400).json({
+          success: false,
+          message: "No valid items in cart",
+        });
+      }
+
+      // Calculate service fee
+      const settings = await getPlatformSettings();
+      const serviceFee = calculateServiceFee(subtotal, settings);
+      const totalAmount = subtotal + serviceFee + deliveryFee;
+
+      // Calculate escrow amount (total minus platform fee)
+      const escrowAmount = subtotal + deliveryFee;
+
+      // Generate order number
+      const orderNumber = generateOrderNumber();
+
+      console.log(`\n=== CREATING ORDER ${orderNumber} ===`);
+      console.log(`Buyer: ${userId}`);
+      console.log(`Items: ${orderItems.length}`);
+      console.log(`Seller: ${firstSellerId}`);
+      console.log(`Subtotal: ₦${subtotal}`);
+      console.log(`Service Fee: ₦${serviceFee}`);
+      console.log(`Delivery Fee: ₦${deliveryFee}`);
+      console.log(`Escrow Amount: ₦${escrowAmount}`);
+      console.log(`Total: ₦${totalAmount}`);
+
+      // Build shipping_address JSONB object
+      const shippingAddress = {
+        name: deliveryAddress.name,
+        phone: deliveryAddress.phone_number,
+        address: deliveryAddress.address,
+        city: deliveryAddress.city,
+        state: deliveryAddress.state,
+        additional_info: deliveryAddress.additional_info || null,
+      };
+
+      // Create order with correct column names
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .insert({
+          order_number: orderNumber,
+          buyer_id: userId,
+          seller_id: firstSellerId,
+          // Required JSONB field
+          shipping_address: shippingAddress,
+          // Amounts (required)
+          subtotal,
+          total_amount: totalAmount,
+          service_fee: serviceFee,
+          escrow_amount: escrowAmount,
+          // Optional fields
+          shipping_fee: deliveryFee,
+          delivery_fee: deliveryFee,
+          tax_amount: 0,
+          discount_amount: 0,
+          currency: "NGN",
+          payment_method: paymentMethod,
+          status: "pending",
+          payment_status: "pending",
+          // Delivery info (optional but useful)
+          delivery_name: deliveryAddress.name,
+          delivery_phone: deliveryAddress.phone_number,
+          delivery_address: deliveryAddress.address,
+          delivery_state: deliveryAddress.state,
+          delivery_city: deliveryAddress.city,
+          delivery_additional_info: deliveryAddress.additional_info,
+          delivery_method: deliveryFee > 0 ? "delivery" : "pickup",
+        })
+        .select()
+        .single();
+
+      if (orderError) {
+        console.error("Order creation error:", orderError);
+        throw orderError;
+      }
+
+      console.log(`✅ Order created: ${order.order_id}`);
+
+      // Create order items
+      const orderItemsWithOrderId = orderItems.map((item) => ({
+        ...item,
+        order_id: order.order_id,
+      }));
+
+      const { error: itemsError } = await supabase
+        .from("order_items")
+        .insert(orderItemsWithOrderId);
+
+      if (itemsError) {
+        console.error("Order items error:", itemsError);
+        throw itemsError;
+      }
+
+      console.log(`✅ Order items created: ${orderItems.length}`);
+
+      // Initialize Paystack payment
+      const paystackReference = `ORDER-${orderNumber}-${Date.now()}`;
+
+      const paymentResult = await paystackService.initializeTransaction({
+        email: user.email,
+        amount: Math.round(totalAmount * 100), // Paystack uses kobo
+        reference: paystackReference,
+        metadata: {
+          order_id: order.order_id,
+          order_number: orderNumber,
+          buyer_id: userId,
+          custom_fields: [
+            {
+              display_name: "Order Number",
+              variable_name: "order_number",
+              value: orderNumber,
+            },
+          ],
+        },
+        callbackUrl: `${process.env.FRONTEND_URL}/cart/checkout/verify?reference=${paystackReference}`,
+      });
+
+      if (!paymentResult.success) {
+        // Delete order if payment init fails
+        await supabase.from("orders").delete().eq("order_id", order.order_id);
+        throw new Error("Failed to initialize payment");
+      }
+
+      // Update order with Paystack reference
+      await supabase
+        .from("orders")
+        .update({ payment_reference: paystackReference })
+        .eq("order_id", order.order_id);
+
+      console.log(`✅ Paystack payment initialized: ${paystackReference}`);
+      console.log(`=== ORDER CREATION COMPLETED ===\n`);
+
+      res.status(201).json({
+        success: true,
+        message: "Order created successfully",
+        data: {
+          orderId: order.order_id,
+          orderNumber,
+          totalAmount,
+          paymentUrl: paymentResult.data.authorization_url,
+          reference: paystackReference,
+        },
+      });
+    } catch (error: any) {
+      console.error("Create order error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to create order",
+      });
+    }
+  },
+);
+
+/**
+ * GET /api/checkout/verify/:reference
+ * Verify payment and complete order
+ */
+router.get(
+  "/verify/:reference",
+  authenticateToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { reference } = req.params;
+      const userId = req.user!.id;
+
+      console.log(`\n=== VERIFYING PAYMENT ${reference} ===`);
+
+      // Verify with Paystack
+      const verifyResult = await paystackService.verifyTransaction(reference);
+
+      if (!verifyResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Payment verification failed",
+        });
+      }
+
+      const { status } = verifyResult.data;
+
+      if (status !== "success") {
+        return res.status(400).json({
+          success: false,
+          message: `Payment ${status}`,
+        });
+      }
+
+      // Get order
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .select("*")
+        .eq("payment_reference", reference)
+        .eq("buyer_id", userId)
+        .single();
+
+      if (orderError || !order) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found",
+        });
+      }
+
+      // Check if already processed
+      if (order.payment_status === "paid") {
+        return res.json({
+          success: true,
+          message: "Payment already verified",
+          data: {
+            orderId: order.order_id,
+            orderNumber: order.order_number,
+            status: order.status,
+          },
+        });
+      }
+
+      console.log(`✅ Payment verified for order: ${order.order_number}`);
+
+      // Update order status
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({
+          payment_status: "paid",
+          status: "confirmed",
+          paid_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("order_id", order.order_id);
+
+      if (updateError) throw updateError;
+
+      // Get order items
+      const { data: orderItems } = await supabase
+        .from("order_items")
+        .select("*")
+        .eq("order_id", order.order_id);
+
+      // Create escrow transactions for each seller
+      const sellerAmounts: Record<string, { amount: number; items: any[] }> =
+        {};
+
+      for (const item of orderItems || []) {
+        if (!sellerAmounts[item.seller_id]) {
+          sellerAmounts[item.seller_id] = { amount: 0, items: [] };
+        }
+        sellerAmounts[item.seller_id].amount +=
+          item.subtotal + (item.delivery_fee || 0);
+        sellerAmounts[item.seller_id].items.push(item);
+      }
+
+      // Create escrow for each seller
+      for (const [sellerId, data] of Object.entries(sellerAmounts)) {
+        const platformFeePercent = 5;
+        const platformFee = (data.amount * platformFeePercent) / 100;
+        const sellerAmount = data.amount - platformFee;
+
+        const { data: escrow, error: escrowError } = await supabase
+          .from("escrow_transactions")
+          .insert({
+            order_id: order.order_id,
+            buyer_id: userId,
+            seller_id: sellerId,
+            amount: data.amount,
+            platform_fee: platformFee,
+            seller_amount: sellerAmount,
+            status: "escrow_held",
+            paystack_reference: reference,
+            auto_release_at: new Date(
+              Date.now() + 5 * 24 * 60 * 60 * 1000,
+            ).toISOString(),
+          })
+          .select()
+          .single();
+
+        if (escrowError) {
+          console.error("Escrow creation error:", escrowError);
+        } else {
+          console.log(
+            `✅ Escrow created for seller ${sellerId}: ₦${sellerAmount}`,
+          );
+
+          // Update order items with escrow ID
+          for (const item of data.items) {
+            await supabase
+              .from("order_items")
+              .update({
+                escrow_id: escrow.id,
+                item_status: "confirmed",
+              })
+              .eq("id", item.id);
+          }
+        }
+      }
+
+      // Reduce stock quantities
+      for (const item of orderItems || []) {
+        await supabase.rpc("decrement_stock", {
+          p_product_id: item.product_id,
+          p_quantity: item.quantity,
+        });
+      }
+
+      // Clear user's cart
+      await supabase.from("cart_items").delete().eq("user_id", userId);
+
+      console.log(`✅ Cart cleared for user ${userId}`);
+      console.log(`=== PAYMENT VERIFICATION COMPLETED ===\n`);
+
+      res.json({
+        success: true,
+        message: "Payment successful! Order confirmed.",
+        data: {
+          orderId: order.order_id,
+          orderNumber: order.order_number,
+          status: "confirmed",
+        },
+      });
+    } catch (error: any) {
+      console.error("Verify payment error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Payment verification failed",
+      });
+    }
+  },
+);
+
+/**
+ * GET /api/checkout/order/:orderId
+ * Get order details
+ */
+router.get(
+  "/order/:orderId",
+  authenticateToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { orderId } = req.params;
+
+      const { data: order, error } = await supabase
+        .from("orders")
+        .select(
+          `
+          *,
+          order_items(*)
+        `,
+        )
+        .eq("order_id", orderId)
+        .eq("buyer_id", userId)
+        .single();
+
+      if (error || !order) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        data: order,
+      });
+    } catch (error) {
+      console.error("Get order error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to get order",
+      });
+    }
+  },
+);
+
+export default router;

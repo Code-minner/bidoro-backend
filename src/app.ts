@@ -21,6 +21,7 @@ import messagesRouter from './routes/messages';
 import adminCustomerRoutes from './routes/admin-customers';
 import sellerRoutes from './routes/seller';
 import sellerPublicRoutes from './routes/sellerPublicRoutes';
+import sellerBankAccountRoutes from './routes/sellerBankAccount';
 import buyerRoutes from './routes/buyer';
 import reviewsRouter from './routes/reviews';
 import ordersRoutes from './routes/orders';
@@ -30,6 +31,14 @@ import wishlistRoutes from './routes/wishlist';
 import auctionRoutes from './routes/auctions';
 import sellerFeedbacksRoutes from './routes/sellerFeedbacks';
 import referralRoutes from './routes/referral.routes';
+import cronRoutes from './routes/cron';  // <-- ADD THIS LINE
+import deliveryAddressRoutes from './routes/deliveryAddress';
+import cartRoutes from './routes/cart';
+import checkoutRoutes from './routes/checkout';
+
+
+
+
 
 import notificationRoutes from './routes/notification.routes';
 
@@ -102,6 +111,7 @@ app.use('/api/messages', messagesRouter);
 app.use('/api/admin', adminCustomerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/sellers', sellerPublicRoutes);
+app.use('/api/seller', sellerBankAccountRoutes); 
 app.use('/api/buyer', buyerRoutes);
 
 app.use('/api/reviews', reviewsRouter);
@@ -116,7 +126,16 @@ app.use('/api/feedbacks', sellerFeedbacksRoutes);
 
 app.use('/api/referral', referralRoutes);
 
+<<<<<<< HEAD
 app.use('/api/notifications', notificationRoutes);
+=======
+app.use('/api/cron', cronRoutes);  // <-- ADD THIS LINE
+
+app.use('/api/user/addresses', deliveryAddressRoutes);
+
+app.use('/api/cart', cartRoutes);
+app.use('/api/checkout', checkoutRoutes);
+>>>>>>> c9c2e1c29d00173a1430d3084fdf22ca5cee0643
 
 // ====================
 // Global error handler
