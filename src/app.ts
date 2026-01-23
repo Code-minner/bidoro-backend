@@ -126,16 +126,13 @@ app.use('/api/feedbacks', sellerFeedbacksRoutes);
 
 app.use('/api/referral', referralRoutes);
 
-<<<<<<< HEAD
 app.use('/api/notifications', notificationRoutes);
-=======
 app.use('/api/cron', cronRoutes);  // <-- ADD THIS LINE
 
 app.use('/api/user/addresses', deliveryAddressRoutes);
 
 app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
->>>>>>> c9c2e1c29d00173a1430d3084fdf22ca5cee0643
 
 // ====================
 // Global error handler
