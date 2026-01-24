@@ -693,4 +693,95 @@ router.delete('/messages/:messageId', authenticateToken, async (req: AuthRequest
   }
 });
 
+// ================================================
+// GET PRODUCT BY ID (for chat product panel)
+// ================================================
+router.get('/products/:productId', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { productId } = req.params;
+
+    console.log('=== Fetching product for chat ===');
+    console.log('Product ID:', productId);
+
+    // Fetch product
+    const { data: product, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('product_id', productId)
+      .single();
+
+    if (error || !product) {
+      console.error('Product not found:', error);
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+        productId: productId
+      });
+    }
+
+    console.log('Product found:', product.name);
+
+    // Fetch images from product_images table
+    const { data: productImages } = await supabase
+      .from('product_images')
+      .select('*')
+      .eq('product_id', productId)
+      .order('display_order', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true });
+
+    console.log('Product images found:', productImages?.length || 0);
+
+    // Get the first image URL - try different possible column names
+    let productImage = null;
+    if (productImages && productImages.length > 0) {
+      const img = productImages[0];
+      productImage = img.image_url || img.url || img.image || img.file_url || img.path;
+    }
+
+    console.log('Product image URL:', productImage);
+
+    // Get seller info
+    let seller = null;
+    if (product.seller_id) {
+      const { data: sellerData } = await supabase
+        .from('users')
+        .select('user_id, name, profile_picture')
+        .eq('user_id', product.seller_id)
+        .single();
+      seller = sellerData;
+    }
+
+    // Format the response
+    const formattedProduct = {
+      id: product.product_id,
+      name: product.name,
+      price: parseFloat(product.price) || product.price,
+      image: productImage || '/placeholder-product.png',
+      images: productImages?.map(img => img.image_url || img.url || img.image) || [],
+      condition: product.condition,
+      negotiable: product.negotiable ?? true,
+      verified: product.receipt_verified || false,
+      sellerId: product.seller_id,
+      sellerName: seller?.name || 'Unknown Seller',
+      sellerAvatar: seller?.profile_picture
+    };
+
+    console.log('Returning formatted product:', formattedProduct);
+
+    res.json({
+      success: true,
+      data: formattedProduct
+    });
+  } catch (error: any) {
+    console.error('Error fetching product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch product',
+      error: error.message
+    });
+  }
+});
+
+   
+
 export default router;
