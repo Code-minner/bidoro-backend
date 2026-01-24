@@ -35,6 +35,8 @@ import cronRoutes from './routes/cron';  // <-- ADD THIS LINE
 import deliveryAddressRoutes from './routes/deliveryAddress';
 import cartRoutes from './routes/cart';
 import checkoutRoutes from './routes/checkout';
+import searchRoutes from "./routes/search";
+
 
 
 
@@ -58,7 +60,13 @@ app.use(
     origin: true, // allow all origins (safe behind auth)
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type', 
+      'Authorization',
+      'Cache-Control',
+      'Pragma',
+      'Expires'
+    ],
   })
 );
 
@@ -131,6 +139,8 @@ app.use('/api/user/addresses', deliveryAddressRoutes);
 
 app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
+
+app.use("/api/search", searchRoutes);
 
 // ====================
 // Global error handler

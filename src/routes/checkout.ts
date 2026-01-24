@@ -35,13 +35,13 @@ const getPlatformSettings = async () => {
   };
 };
 
-// Helper: Calculate service fee
+// Helper: Calculate service fee (ROUNDED)
 const calculateServiceFee = (
   subtotal: number,
   settings: { serviceFeePercent: number; minServiceFee: number }
 ) => {
   const percentageFee = (subtotal * settings.serviceFeePercent) / 100;
-  return Math.max(percentageFee, settings.minServiceFee);
+  return Math.round(Math.max(percentageFee, settings.minServiceFee)); // ROUND HERE
 };
 
 /**
@@ -89,7 +89,7 @@ router.get(
 
         if (productError || !product) continue;
 
-        const itemSubtotal = product.price * item.quantity;
+        const itemSubtotal = Math.round(product.price * item.quantity); // ROUND
         const itemDeliveryFee = item.pay_for_delivery ? DEFAULT_DELIVERY_FEE : 0;
 
         subtotal += itemSubtotal;
@@ -110,7 +110,7 @@ router.get(
 
       const settings = await getPlatformSettings();
       const serviceFee = calculateServiceFee(subtotal, settings);
-      const totalAmount = subtotal + serviceFee + deliveryFee;
+      const totalAmount = Math.round(subtotal + serviceFee + deliveryFee); // ROUND
 
       const { data: defaultAddress } = await supabase
         .from("delivery_addresses")
@@ -244,7 +244,7 @@ router.post(
           });
         }
 
-        const itemSubtotal = product.price * item.quantity;
+        const itemSubtotal = Math.round(product.price * item.quantity); // ROUND
         const itemDeliveryFee = item.pay_for_delivery ? DEFAULT_DELIVERY_FEE : 0;
 
         subtotal += itemSubtotal;
@@ -255,7 +255,7 @@ router.post(
           seller_id: product.seller_id,
           product_name: product.name,
           product_image: product.product_images?.[0]?.image_url || null,
-          unit_price: product.price,
+          unit_price: Math.round(product.price), // ROUND
           quantity: item.quantity,
           subtotal: itemSubtotal,
           total_price: itemSubtotal,
@@ -279,15 +279,18 @@ router.post(
       }
 
       const settings = await getPlatformSettings();
-      const serviceFee = calculateServiceFee(subtotal, settings);
-      const totalAmount = subtotal + serviceFee + deliveryFee;
-      const escrowAmount = subtotal + deliveryFee;
+      const serviceFee = calculateServiceFee(subtotal, settings); // Already rounded in helper
+      const totalAmount = Math.round(subtotal + serviceFee + deliveryFee); // ROUND
+      const escrowAmount = Math.round(subtotal + deliveryFee); // ROUND
       const orderNumber = generateOrderNumber();
 
       console.log(`\n=== CREATING ORDER ${orderNumber} ===`);
       console.log(`Buyer: ${userId}`);
       console.log(`Items: ${orderItems.length}`);
       console.log(`Seller: ${firstSellerId}`);
+      console.log(`Subtotal: ₦${subtotal}`);
+      console.log(`Service Fee: ₦${serviceFee}`);
+      console.log(`Delivery Fee: ₦${deliveryFee}`);
       console.log(`Total: ₦${totalAmount}`);
 
       const shippingAddress = {
@@ -306,12 +309,12 @@ router.post(
           buyer_id: userId,
           seller_id: firstSellerId,
           shipping_address: shippingAddress,
-          subtotal,
+          subtotal: Math.round(subtotal), // ROUND
           total_amount: totalAmount,
           service_fee: serviceFee,
           escrow_amount: escrowAmount,
-          shipping_fee: deliveryFee,
-          delivery_fee: deliveryFee,
+          shipping_fee: Math.round(deliveryFee), // ROUND
+          delivery_fee: Math.round(deliveryFee), // ROUND
           tax_amount: 0,
           discount_amount: 0,
           currency: "NGN",
@@ -356,7 +359,7 @@ router.post(
 
       const paymentResult = await paystackService.initializeTransaction({
         email: user.email,
-        amount: Math.round(totalAmount * 100),
+        amount: Math.round(totalAmount * 100), // Paystack expects kobo (already rounded totalAmount * 100)
         reference: paystackReference,
         metadata: {
           order_id: order.order_id,
@@ -409,7 +412,6 @@ router.post(
 
 /**
  * GET /api/checkout/verify/:reference
- * Verify payment and complete order - THIS IS WHERE EMAILS GO
  */
 router.get(
   "/verify/:reference",
@@ -497,8 +499,8 @@ router.get(
 
       for (const [sellerId, data] of Object.entries(sellerAmounts)) {
         const platformFeePercent = 5;
-        const platformFee = (data.amount * platformFeePercent) / 100;
-        const sellerAmount = data.amount - platformFee;
+        const platformFee = Math.round((data.amount * platformFeePercent) / 100); // ROUND
+        const sellerAmount = Math.round(data.amount - platformFee); // ROUND
 
         const { data: escrow, error: escrowError } = await supabase
           .from("escrow_transactions")
@@ -506,7 +508,7 @@ router.get(
             order_id: order.order_id,
             buyer_id: userId,
             seller_id: sellerId,
-            amount: data.amount,
+            amount: Math.round(data.amount), // ROUND
             platform_fee: platformFee,
             seller_amount: sellerAmount,
             status: "escrow_held",
