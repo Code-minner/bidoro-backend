@@ -1,6 +1,7 @@
 // ================================================
 // BIDORO BACKEND - MESSAGES API ROUTES
 // File: src/routes/messages.ts
+// WITH NOTIFICATION INTEGRATION
 // ================================================
 
 import { Router } from 'express';
@@ -9,6 +10,7 @@ import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { Response } from 'express';
+import { notificationService } from '../services/notification.service'; // ADD THIS
 
 const router = Router();
 
@@ -33,6 +35,46 @@ const upload = multer({
   }
 });
 
+// ================================================
+// HELPER: Send message notification
+// ================================================
+async function sendMessageNotification(
+  recipientId: string, 
+  senderId: string, 
+  messagePreview: string,
+  conversationId: string
+) {
+  try {
+    // Get sender name
+    const { data: sender } = await supabase
+      .from('users')
+      .select('name')
+      .eq('user_id', senderId)
+      .single();
+
+    const senderName = sender?.name || 'Someone';
+    const truncatedMessage = messagePreview.length > 50 
+      ? messagePreview.substring(0, 50) + '...' 
+      : messagePreview;
+
+    await notificationService.createNotification({
+      user_id: recipientId,
+      title: `New message from ${senderName}`,
+      message: truncatedMessage,
+      category: 'messages',
+      type: 'info',
+      action_url: `/messager?conversation=${conversationId}`,
+      metadata: {
+        sender_id: senderId,
+        sender_name: senderName,
+        conversation_id: conversationId
+      }
+    });
+  } catch (error) {
+    console.error('Failed to send message notification:', error);
+    // Don't throw - notification failure shouldn't break messaging
+  }
+}
 
 // ================================================
 // GET ALL CONVERSATIONS FOR CURRENT USER
@@ -71,13 +113,11 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
       participantIds.add(conv.seller_id);
     });
 
-    // ✅ UPDATED: Query from 'users' table to get profile_picture
     const { data: profiles } = await supabase
       .from('users')
       .select('user_id, name, email, profile_picture')
       .in('user_id', Array.from(participantIds));
 
-    // ✅ UPDATED: Also get online status from user_profiles
     const { data: userProfiles } = await supabase
       .from('user_profiles')
       .select('id, username, full_name, is_online, last_seen')
@@ -101,7 +141,7 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
           id: otherUserId,
           username: onlineStatus?.username || userProfile.name,
           fullName: onlineStatus?.full_name || userProfile.name,
-          avatarUrl: userProfile.profile_picture, // ✅ From users table
+          avatarUrl: userProfile.profile_picture,
           isOnline: onlineStatus?.is_online || false,
           lastSeen: onlineStatus?.last_seen || new Date().toISOString()
         } : null,
@@ -130,22 +170,13 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
   }
 });
 
-
 // ================================================
-// UPDATE 1: GET OR CREATE CONVERSATION - Add isNew flag
+// GET OR CREATE CONVERSATION
 // ================================================
-
-// Replace the existing endpoint with this:
 router.post('/conversations/get-or-create', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
     const { otherUserId, productId } = req.body;
-
-    console.log('Get or create conversation request:', {
-      currentUserId,
-      otherUserId,
-      productId
-    });
 
     if (!otherUserId) {
       return res.status(400).json({
@@ -171,25 +202,20 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       .limit(1)
       .maybeSingle();
 
-    if (searchError) {
-      console.error('Error searching for conversation:', searchError);
-      throw searchError;
-    }
+    if (searchError) throw searchError;
 
     if (existingConv) {
-      console.log('Found existing conversation:', existingConv.conversation_id);
       return res.json({
         success: true,
         data: { 
           conversationId: existingConv.conversation_id,
-          isNew: false // ✅ EXISTING CONVERSATION
+          isNew: false
         }
       });
     }
 
     // Create new conversation
     const conversationId = uuidv4();
-    console.log('Creating new conversation:', conversationId);
 
     const { data: newConv, error: createError } = await supabase
       .from('conversations')
@@ -207,18 +233,13 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       .select('conversation_id')
       .single();
 
-    if (createError) {
-      console.error('Error creating conversation:', createError);
-      throw createError;
-    }
-
-    console.log('Created new conversation:', newConv.conversation_id);
+    if (createError) throw createError;
 
     res.json({
       success: true,
       data: { 
         conversationId: newConv.conversation_id,
-        isNew: true // ✅ NEW CONVERSATION
+        isNew: true
       }
     });
   } catch (error: any) {
@@ -226,8 +247,7 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
     res.status(500).json({
       success: false,
       message: 'Failed to create conversation',
-      error: error.message,
-      details: error.details || error.hint
+      error: error.message
     });
   }
 });
@@ -256,47 +276,45 @@ router.get('/conversations/:conversationId/messages', authenticateToken, async (
     }
 
     // Fetch messages
-   // In GET /conversations/:conversationId/messages
-const { data: messages, error } = await supabase
-  .from('messages')
-  .select(`
-    message_id,
-    conversation_id,
-    sender_id,
-    content,
-    message_type,
-    metadata,
-    is_read,
-    created_at
-  `)
-  .eq('conversation_id', conversationId)
-  .order('created_at', { ascending: true })
-  .range(Number(offset), Number(offset) + Number(limit) - 1);
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select(`
+        message_id,
+        conversation_id,
+        sender_id,
+        content,
+        message_type,
+        metadata,
+        is_read,
+        created_at
+      `)
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+      .range(Number(offset), Number(offset) + Number(limit) - 1);
 
-if (error) throw error;
+    if (error) throw error;
 
-// Get sender profiles
-const senderIds = [...new Set(messages?.map(m => m.sender_id) || [])];
-const { data: profiles } = await supabase
-  .from('user_profiles')
-  .select('id, username, full_name, avatar_url')
-  .in('id', senderIds);
+    // Get sender profiles
+    const senderIds = [...new Set(messages?.map(m => m.sender_id) || [])];
+    const { data: profiles } = await supabase
+      .from('user_profiles')
+      .select('id, username, full_name, avatar_url')
+      .in('id', senderIds);
 
-const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
+    const profileMap = new Map(profiles?.map(p => [p.id, p]) || []);
 
-const formattedMessages = messages?.map(msg => ({
-  id: msg.message_id,
-  conversationId: msg.conversation_id,
-  senderId: msg.sender_id,
-  content: msg.content,
-  messageType: msg.message_type,
-  metadata: msg.metadata, // ✅ ADD THIS - Include full metadata
-  imageUrl: msg.metadata?.image_url,
-  isRead: msg.is_read,
-  createdAt: msg.created_at,
-  updatedAt: undefined,
-  sender: profileMap.get(msg.sender_id)
-}));
+    const formattedMessages = messages?.map(msg => ({
+      id: msg.message_id,
+      conversationId: msg.conversation_id,
+      senderId: msg.sender_id,
+      content: msg.content,
+      messageType: msg.message_type,
+      metadata: msg.metadata,
+      imageUrl: msg.metadata?.image_url,
+      isRead: msg.is_read,
+      createdAt: msg.created_at,
+      sender: profileMap.get(msg.sender_id)
+    }));
 
     res.json({
       success: true,
@@ -313,14 +331,12 @@ const formattedMessages = messages?.map(msg => ({
 });
 
 // ================================================
-// UPDATE 2: SEND MESSAGE - Support Product Reference
+// SEND MESSAGE - WITH NOTIFICATION
 // ================================================
-
-// Replace the existing POST messages endpoint with this:
 router.post('/conversations/:conversationId/messages', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { conversationId } = req.params;
-    const { content, productReference } = req.body; // ✅ ADD productReference
+    const { content, productReference } = req.body;
     const userId = req.user!.id;
 
     if (!content || content.trim().length === 0) {
@@ -330,7 +346,7 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
       });
     }
 
-    // Verify user is part of conversation
+    // Verify user is part of conversation and get recipient
     const { data: conversation } = await supabase
       .from('conversations')
       .select('buyer_id, seller_id')
@@ -344,10 +360,15 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
       });
     }
 
-    // Determine message type based on whether it has product reference
+    // Determine recipient
+    const recipientId = conversation.buyer_id === userId 
+      ? conversation.seller_id 
+      : conversation.buyer_id;
+
+    // Determine message type
     const messageType = productReference ? 'product' : 'text';
     
-    // Build metadata object
+    // Build metadata
     const metadata = productReference ? {
       productId: productReference.productId,
       productName: productReference.productName,
@@ -366,8 +387,8 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
         conversation_id: conversationId,
         sender_id: userId,
         content: content.trim(),
-        message_type: messageType, // ✅ 'product' or 'text'
-        metadata: metadata, // ✅ Store product info
+        message_type: messageType,
+        metadata: metadata,
         is_read: false,
         created_at: new Date().toISOString()
       })
@@ -377,6 +398,20 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
     if (error) throw error;
 
     // Update conversation's last message
+    const isSenderBuyer = conversation.buyer_id === userId;
+    const updateData: any = {
+      last_message_preview: content.trim(),
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Increment unread count for recipient
+    if (isSenderBuyer) {
+      updateData.unread_count_seller = supabase.rpc('increment', { x: 1 });
+    } else {
+      updateData.unread_count_buyer = supabase.rpc('increment', { x: 1 });
+    }
+
     await supabase
       .from('conversations')
       .update({
@@ -385,6 +420,11 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
         updated_at: new Date().toISOString()
       })
       .eq('conversation_id', conversationId);
+
+    // =============================================
+    // SEND NOTIFICATION TO RECIPIENT
+    // =============================================
+    await sendMessageNotification(recipientId, userId, content.trim(), conversationId);
 
     res.json({
       success: true,
@@ -401,7 +441,7 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
 });
 
 // ================================================
-// SEND AN IMAGE MESSAGE - CORRECT SCHEMA
+// SEND IMAGE MESSAGE - WITH NOTIFICATION
 // ================================================
 router.post('/conversations/:conversationId/messages/image', 
   authenticateToken, 
@@ -433,6 +473,11 @@ router.post('/conversations/:conversationId/messages/image',
         });
       }
 
+      // Determine recipient
+      const recipientId = conversation.buyer_id === userId 
+        ? conversation.seller_id 
+        : conversation.buyer_id;
+
       // Upload image to Supabase Storage
       const fileExt = req.file.originalname.split('.').pop() || 'jpg';
       const fileName = `${uuidv4()}.${fileExt}`;
@@ -445,17 +490,14 @@ router.post('/conversations/:conversationId/messages/image',
           upsert: false
         });
 
-      if (uploadError) {
-        console.error('Storage upload error:', uploadError);
-        throw uploadError;
-      }
+      if (uploadError) throw uploadError;
 
       // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('chat-images')
         .getPublicUrl(filePath);
 
-      // Insert message - using metadata instead of payload
+      // Insert message
       const { data: message, error } = await supabase
         .from('messages')
         .insert({
@@ -468,30 +510,30 @@ router.post('/conversations/:conversationId/messages/image',
             image_url: publicUrl,
             file_name: req.file.originalname,
             file_size: req.file.size,
-            file_type: req.file.mimetype,
-            file_extension: fileExt
+            file_type: req.file.mimetype
           },
           is_read: false,
-          is_edited: false,
           created_at: new Date().toISOString()
         })
         .select()
         .single();
 
-      if (error) {
-        console.error('Database insert error:', error);
-        throw error;
-      }
+      if (error) throw error;
 
-      // Update conversation's last message
+      // Update conversation
       await supabase
         .from('conversations')
         .update({
-          last_message_preview: content.trim() || 'Image',
+          last_message_preview: '📷 Image',
           last_message_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
         .eq('conversation_id', conversationId);
+
+      // =============================================
+      // SEND NOTIFICATION TO RECIPIENT
+      // =============================================
+      await sendMessageNotification(recipientId, userId, '📷 Sent an image', conversationId);
 
       res.json({
         success: true,
@@ -694,16 +736,12 @@ router.delete('/messages/:messageId', authenticateToken, async (req: AuthRequest
 });
 
 // ================================================
-// GET PRODUCT BY ID (for chat product panel)
+// GET PRODUCT BY ID
 // ================================================
 router.get('/products/:productId', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { productId } = req.params;
 
-    console.log('=== Fetching product for chat ===');
-    console.log('Product ID:', productId);
-
-    // Fetch product
     const { data: product, error } = await supabase
       .from('products')
       .select('*')
@@ -711,36 +749,24 @@ router.get('/products/:productId', authenticateToken, async (req: AuthRequest, r
       .single();
 
     if (error || !product) {
-      console.error('Product not found:', error);
       return res.status(404).json({
         success: false,
-        message: 'Product not found',
-        productId: productId
+        message: 'Product not found'
       });
     }
 
-    console.log('Product found:', product.name);
-
-    // Fetch images from product_images table
     const { data: productImages } = await supabase
       .from('product_images')
       .select('*')
       .eq('product_id', productId)
-      .order('display_order', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true });
+      .order('display_order', { ascending: true });
 
-    console.log('Product images found:', productImages?.length || 0);
-
-    // Get the first image URL - try different possible column names
     let productImage = null;
     if (productImages && productImages.length > 0) {
       const img = productImages[0];
-      productImage = img.image_url || img.url || img.image || img.file_url || img.path;
+      productImage = img.image_url || img.url || img.image;
     }
 
-    console.log('Product image URL:', productImage);
-
-    // Get seller info
     let seller = null;
     if (product.seller_id) {
       const { data: sellerData } = await supabase
@@ -751,26 +777,21 @@ router.get('/products/:productId', authenticateToken, async (req: AuthRequest, r
       seller = sellerData;
     }
 
-    // Format the response
-    const formattedProduct = {
-      id: product.product_id,
-      name: product.name,
-      price: parseFloat(product.price) || product.price,
-      image: productImage || '/placeholder-product.png',
-      images: productImages?.map(img => img.image_url || img.url || img.image) || [],
-      condition: product.condition,
-      negotiable: product.negotiable ?? true,
-      verified: product.receipt_verified || false,
-      sellerId: product.seller_id,
-      sellerName: seller?.name || 'Unknown Seller',
-      sellerAvatar: seller?.profile_picture
-    };
-
-    console.log('Returning formatted product:', formattedProduct);
-
     res.json({
       success: true,
-      data: formattedProduct
+      data: {
+        id: product.product_id,
+        name: product.name,
+        price: parseFloat(product.price) || product.price,
+        image: productImage || '/placeholder-product.png',
+        images: productImages?.map(img => img.image_url || img.url) || [],
+        condition: product.condition,
+        negotiable: product.negotiable ?? true,
+        verified: product.receipt_verified || false,
+        sellerId: product.seller_id,
+        sellerName: seller?.name || 'Unknown Seller',
+        sellerAvatar: seller?.profile_picture
+      }
     });
   } catch (error: any) {
     console.error('Error fetching product:', error);
@@ -781,7 +802,5 @@ router.get('/products/:productId', authenticateToken, async (req: AuthRequest, r
     });
   }
 });
-
-   
 
 export default router;

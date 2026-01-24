@@ -3,7 +3,8 @@ import { supabase } from '../config/supabase';
 import { hashPassword, comparePassword, generateToken } from '../utils/helpers';
 import { RegisterRequest, LoginRequest } from '../types';
 import { AuthRequest as AuthenticatedRequest } from '../middleware/auth';
-import { onUserSignup } from '../utils/referral.utils'; // Add this import
+import { onUserSignup } from '../utils/referral.utils';
+import { notificationService } from '../services/notification.service'; // ADD THIS
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -14,7 +15,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       role = 'buyer', 
       phone_number, 
       location,
-      referral_code  // Add referral_code to request body
+      referral_code
     }: RegisterRequest & { referral_code?: string } = req.body;
 
     // Check if user already exists
@@ -63,11 +64,23 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // =============================================
+    // SEND WELCOME NOTIFICATION
+    // =============================================
+    try {
+      await notificationService.createWelcomeNotification(newUser.user_id, newUser.name);
+    } catch (notifError) {
+      console.error('Failed to create welcome notification:', notifError);
+      // Don't fail registration if notification fails
+    }
+
     // Apply referral code if provided
     let referralBonus: number | undefined;
     if (referral_code) {
       const referralResult = await onUserSignup(newUser.user_id, referral_code);
       referralBonus = referralResult.pointsEarned;
+      
+      // Referral notification is already sent in onUserSignup via referral.utils.ts
     }
 
     // Generate JWT token
@@ -219,6 +232,20 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
         message: 'Failed to update profile'
       });
       return;
+    }
+
+    // =============================================
+    // SEND PROFILE UPDATE NOTIFICATION
+    // =============================================
+    try {
+      await notificationService.createAccountNotification(
+        req.user!.id,
+        'Profile Updated',
+        'Your profile has been updated successfully.',
+        'success'
+      );
+    } catch (notifError) {
+      console.error('Failed to create profile update notification:', notifError);
     }
 
     res.status(200).json({
