@@ -19,8 +19,35 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Service fee percentage (2.5%)
-const SERVICE_FEE_PERCENTAGE = 0.025;
+// ================================================
+// SERVICE FEE CALCULATION (Unified with checkout.ts)
+// ================================================
+
+// Helper: Get platform settings from database
+const getPlatformSettings = async () => {
+  const { data } = await supabase
+    .from("platform_settings")
+    .select("key, value");
+
+  const settings: Record<string, string> = {};
+  data?.forEach((item) => {
+    settings[item.key] = item.value;
+  });
+
+  return {
+    serviceFeePercent: parseFloat(settings.service_fee_percent || "5"),
+    minServiceFee: parseFloat(settings.min_service_fee || "500"),
+  };
+};
+
+// Helper: Calculate service fee (matches checkout.ts logic)
+const calculateServiceFee = (
+  subtotal: number,
+  settings: { serviceFeePercent: number; minServiceFee: number }
+): number => {
+  const percentageFee = (subtotal * settings.serviceFeePercent) / 100;
+  return Math.max(percentageFee, settings.minServiceFee);
+};
 
 // Valid status transitions - using actual DB values
 const VALID_TRANSITIONS: Record<string, string[]> = {
@@ -735,7 +762,10 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       (sum: number, item: any) => sum + item.quantity * item.unitPrice,
       0
     );
-    const serviceFee = Math.round(subtotal * SERVICE_FEE_PERCENTAGE);
+
+    // Get platform settings and calculate service fee (unified with checkout.ts)
+    const settings = await getPlatformSettings();
+    const serviceFee = calculateServiceFee(subtotal, settings);
     const totalAmount = subtotal + shippingFee + serviceFee;
 
     // Create order
