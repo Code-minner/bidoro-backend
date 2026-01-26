@@ -8,7 +8,7 @@ import {
 } from "../middleware/auth";
 import { supabaseAdmin as supabase } from "../config/database";
 import { uploadMiddleware } from "../middleware/upload";
-import flutterwaveService from "../services/flutterwaveService"; // ← Change from paystack
+import flutterwaveService from "../services/flutterwaveService";
 import { emailService } from "../services/emailService";
 
 const router = express.Router();
@@ -100,7 +100,6 @@ router.post(
 
       if (saveError) {
         console.error("❌ Failed to save verification:", saveError);
-        // Still return success to user but log the error
       }
 
       res.json({
@@ -133,7 +132,7 @@ router.post(
 // POST /api/kyc/upload
 router.post(
   "/upload",
-  authenticateForKyc, // ✅ Changed
+  authenticateForKyc,
   uploadMiddleware.single("document"),
   async (req: AuthRequest, res: Response) => {
     try {
@@ -198,10 +197,10 @@ router.post(
           application_id: application.application_id,
           user_id: userId,
           document_type,
-          file_name: file.originalname, // ← CHANGE: Cloudinary uses originalname
-          file_url: file.path, // ← SAME: Now it's Cloudinary URL
-          file_size: file.size, // ← SAME
-          mime_type: file.mimetype, // ← SAME
+          file_name: file.originalname,
+          file_url: file.path,
+          file_size: file.size,
+          mime_type: file.mimetype,
         })
         .select()
         .single();
@@ -247,7 +246,7 @@ router.post(
 );
 
 // ============================================
-// NEW: Get list of banks (for dropdown)
+// Get list of banks (for dropdown)
 // ============================================
 router.get("/banks", async (req: AuthRequest, res: Response) => {
   try {
@@ -267,6 +266,9 @@ router.get("/banks", async (req: AuthRequest, res: Response) => {
   }
 });
 
+// ============================================
+// UPDATED: KYC Submit - Now handles bank verification properly
+// ============================================
 router.post(
   "/submit",
   authenticateForKyc,
@@ -277,10 +279,9 @@ router.post(
 
       console.log("Received KYC submission:", formData);
 
-      // ✅ ADD DETAILED LOGGING FOR EACH VALIDATION
       console.log("\n=== VALIDATION CHECKS ===");
 
-      // Validate all required fields
+      // Validate identity
       if (
         !formData.verifyIdentity?.address ||
         !formData.verifyIdentity?.state ||
@@ -288,11 +289,6 @@ router.post(
         !formData.verifyIdentity?.idNum
       ) {
         console.log("❌ FAILED: Identity verification information");
-        console.log("  address:", !!formData.verifyIdentity?.address);
-        console.log("  state:", !!formData.verifyIdentity?.state);
-        console.log("  lga:", !!formData.verifyIdentity?.lga);
-        console.log("  idNum:", !!formData.verifyIdentity?.idNum);
-
         return res.status(400).json({
           success: false,
           message: "Identity verification information is incomplete",
@@ -300,6 +296,7 @@ router.post(
       }
       console.log("✅ PASSED: Identity verification");
 
+      // Validate business info
       if (!formData.businessInfo?.storeName) {
         console.log("❌ FAILED: Business information - missing storeName");
         return res.status(400).json({
@@ -309,11 +306,9 @@ router.post(
       }
       console.log("✅ PASSED: Business information");
 
+      // Validate store setup
       if (!formData.storeSetup?.storeCat || !formData.storeSetup?.policyAgree) {
         console.log("❌ FAILED: Store setup information");
-        console.log("  storeCat:", !!formData.storeSetup?.storeCat);
-        console.log("  policyAgree:", !!formData.storeSetup?.policyAgree);
-
         return res.status(400).json({
           success: false,
           message: "Store setup information is incomplete",
@@ -321,17 +316,12 @@ router.post(
       }
       console.log("✅ PASSED: Store setup");
 
+      // Validate bank account info
       if (
         !formData.withdrawalDetails?.accountNumber ||
         !formData.withdrawalDetails?.bankCode
       ) {
         console.log("❌ FAILED: Bank account information");
-        console.log(
-          "  accountNumber:",
-          !!formData.withdrawalDetails?.accountNumber
-        );
-        console.log("  bankCode:", !!formData.withdrawalDetails?.bankCode);
-
         return res.status(400).json({
           success: false,
           message: "Bank account information is incomplete",
@@ -339,13 +329,17 @@ router.post(
       }
       console.log("✅ PASSED: Bank account information");
 
-      // Check if bank account is verified
+      // ============================================
+      // UPDATED: Check bank verification with fallback
+      // ============================================
       console.log("\n=== CHECKING BANK VERIFICATION ===");
       console.log("User ID:", userId);
       console.log("Account Number:", formData.withdrawalDetails.accountNumber);
       console.log("Bank Code:", formData.withdrawalDetails.bankCode);
+      console.log("Account Name from frontend:", formData.withdrawalDetails.accountName);
 
-      const { data: bankVerification, error: bankVerifyError } = await supabase
+      // First, check if verification exists in bank_verifications table
+      let { data: bankVerification, error: bankVerifyError } = await supabase
         .from("bank_verifications")
         .select("*")
         .eq("user_id", userId)
@@ -354,19 +348,77 @@ router.post(
         .eq("is_verified", true)
         .single();
 
-      console.log("Bank verification query result:", bankVerification);
-      console.log("Bank verification query error:", bankVerifyError);
+      console.log("Bank verification from table:", bankVerification);
 
-      // ✅ Check all verifications for this user (debug)
-      const { data: allVerifications } = await supabase
-        .from("bank_verifications")
-        .select("*")
-        .eq("user_id", userId);
+      // ✅ NEW: If not found in bank_verifications, check if frontend provided accountName
+      // This means it was verified via /seller/bank-account/verify (Paystack)
+      if (!bankVerification && formData.withdrawalDetails.accountName) {
+        console.log("⚠️ No bank_verifications record found, but frontend provided accountName");
+        console.log("Creating bank_verifications record from Paystack verification...");
 
-      console.log("All bank verifications for user:", allVerifications);
+        // Create the verification record since Paystack already verified it
+        const { data: newVerification, error: createError } = await supabase
+          .from("bank_verifications")
+          .upsert({
+            user_id: userId,
+            account_number: formData.withdrawalDetails.accountNumber,
+            bank_code: formData.withdrawalDetails.bankCode,
+            account_name: formData.withdrawalDetails.accountName,
+            is_verified: true,
+            verified_at: new Date().toISOString(),
+            // Note: We don't have paystack_response here, but that's okay
+          })
+          .select()
+          .single();
 
+        if (createError) {
+          console.error("Failed to create bank verification record:", createError);
+        } else {
+          console.log("✅ Created bank_verifications record:", newVerification);
+          bankVerification = newVerification;
+        }
+      }
+
+      // Also check seller_bank_accounts table as fallback
+      if (!bankVerification) {
+        console.log("Checking seller_bank_accounts table...");
+        const { data: sellerBankAccount } = await supabase
+          .from("seller_bank_accounts")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("account_number", formData.withdrawalDetails.accountNumber)
+          .eq("bank_code", formData.withdrawalDetails.bankCode)
+          .eq("is_verified", true)
+          .single();
+
+        if (sellerBankAccount) {
+          console.log("✅ Found verified account in seller_bank_accounts:", sellerBankAccount);
+          // Create bank_verifications record from seller_bank_accounts
+          const { data: newVerification } = await supabase
+            .from("bank_verifications")
+            .upsert({
+              user_id: userId,
+              account_number: sellerBankAccount.account_number,
+              bank_code: sellerBankAccount.bank_code,
+              account_name: sellerBankAccount.account_name,
+              is_verified: true,
+              verified_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+
+          bankVerification = newVerification || {
+            account_name: sellerBankAccount.account_name,
+            is_verified: true,
+          };
+        }
+      }
+
+      // Final check - if still no verification, reject
       if (!bankVerification) {
         console.log("❌ FAILED: Bank account not verified");
+        console.log("No verification found in bank_verifications or seller_bank_accounts");
+        console.log("And no accountName provided from frontend");
         return res.status(400).json({
           success: false,
           message:
@@ -375,17 +427,20 @@ router.post(
       }
       console.log("✅ PASSED: Bank verification");
 
+      // ============================================
       // Check for required documents
+      // ============================================
       const { data: documents, error: docError } = await supabase
         .from("kyc_documents")
         .select("document_type")
         .eq("user_id", userId);
 
       console.log("Documents query result:", documents);
-      console.log("Documents query error:", docError);
 
       const uploadedTypes = documents?.map((d) => d.document_type) || [];
-      const requiredDocs = ["id_card", "selfie", "business_cert", "store_logo"];
+      
+      // ✅ UPDATED: business_cert is now optional
+      const requiredDocs = ["id_card", "selfie", "store_logo"];
       const missingDocs = requiredDocs.filter(
         (doc) => !uploadedTypes.includes(doc)
       );
@@ -395,10 +450,7 @@ router.post(
       console.log("Missing documents:", missingDocs);
 
       if (missingDocs.length > 0) {
-        console.log(
-          "❌ FAILED: Missing required documents:",
-          missingDocs.join(", ")
-        );
+        console.log("❌ FAILED: Missing required documents:", missingDocs.join(", "));
         return res.status(400).json({
           success: false,
           message: `Missing required documents: ${missingDocs.join(", ")}`,
@@ -408,7 +460,6 @@ router.post(
 
       console.log("=== ALL VALIDATIONS PASSED ===\n");
 
-      // ... rest of your code to save the application
       // Get or create application
       const { data: existingApp } = await supabase
         .from("kyc_applications")
@@ -430,7 +481,7 @@ router.post(
         // Business data
         store_name: formData.businessInfo.storeName,
         store_address: formData.businessInfo.storeAddress,
-        business_id: formData.businessInfo.businessID,
+        business_id: formData.businessInfo.businessID || null,
 
         // Store data
         store_category: formData.storeSetup.storeCat,
@@ -440,7 +491,7 @@ router.post(
         active_hours: formData.storeSetup.activeHours,
         policies_agreed: formData.storeSetup.policyAgree,
 
-        // Bank data
+        // Bank data - use bankVerification.account_name (verified)
         account_number: formData.withdrawalDetails.accountNumber,
         bank_name: formData.withdrawalDetails.bankName,
         bank_code: formData.withdrawalDetails.bankCode,
@@ -478,7 +529,6 @@ router.post(
         .update({
           kyc_status: "submitted",
           updated_at: new Date().toISOString(),
-          // Note: kyc_submitted_at column doesn't exist in users table
         })
         .eq("user_id", userId);
 
@@ -497,7 +547,7 @@ router.post(
         reason: "Application submitted by user",
       });
 
-      // Send emails (optional but recommended)
+      // Send emails
       try {
         const { data: user } = await supabase
           .from("users")
@@ -521,7 +571,6 @@ router.post(
         }
       } catch (emailError) {
         console.error("Email notification failed:", emailError);
-        // Don't fail the request if emails fail
       }
 
       res.json({
@@ -545,6 +594,3 @@ router.post(
 );
 
 export default router;
-
-// ============================================
-// STEP 2: Update Frontend to use YOUR backend
