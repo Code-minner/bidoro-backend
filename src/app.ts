@@ -35,6 +35,10 @@ import cronRoutes from './routes/cron';  // <-- ADD THIS LINE
 import deliveryAddressRoutes from './routes/deliveryAddress';
 import cartRoutes from './routes/cart';
 import checkoutRoutes from './routes/checkout';
+import searchRoutes from "./routes/search";
+import oauthRoutes from './routes/oauth';
+
+
 
 
 
@@ -59,7 +63,13 @@ app.use(
     origin: true, // allow all origins (safe behind auth)
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type', 
+      'Authorization',
+      'Cache-Control',
+      'Pragma',
+      'Expires'
+    ],
   })
 );
 
@@ -98,6 +108,7 @@ app.get('/', (_req, res) => {
 // ====================
 app.use('/api/locations', locationRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/auth/oauth', oauthRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/flutterwave', flutterwaveRoutes);
@@ -133,6 +144,8 @@ app.use('/api/user/addresses', deliveryAddressRoutes);
 
 app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
+
+app.use("/api/search", searchRoutes);
 
 // ====================
 // Global error handler

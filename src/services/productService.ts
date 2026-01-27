@@ -8,7 +8,7 @@ export class ProductService {
   constructor() {
     this.ocrService = new OCRService();
   }
-
+  
   async createProduct(data: any) {
     try {
       // 1. Get category_id from category key
@@ -37,7 +37,7 @@ export class ProductService {
         description: data.productDetails.description || "",
         short_description: (data.productDetails.description || "").substring(
           0,
-          200,
+          200
         ),
         price: data.productDetails.price,
         original_price: data.productDetails.price,
@@ -107,27 +107,9 @@ export class ProductService {
       if (data.productCore.imageUrls && data.productCore.imageUrls.length > 0) {
         images = await this.saveImages(
           product.product_id,
-          data.productCore.imageUrls,
+          data.productCore.imageUrls
         );
       }
-
-      // // 7. Create verification record (commented out)
-      // let verification = null;
-      // if (data.verification?.videoFile || data.verification?.receiptFile) {
-      //   verification = await this.createVerification(product.product_id, data.verification);
-      //   // If receipt was auto-verified, update product status
-      //   if (verification.status === 'approved') {
-      //     await supabase
-      //       .from('products')
-      //       .update({
-      //         verification_status: 'verified',
-      //         receipt_verified: true,
-      //         status: 'active'
-      //       })
-      //       .eq('product_id', product.product_id);
-      //     console.log('✅ Product auto-verified and published!');
-      //   }
-      // }
 
       let verification = null;
 
@@ -179,12 +161,12 @@ export class ProductService {
           verificationStatus = "approved";
           console.log(
             "✅ Receipt auto-verified! Confidence:",
-            ocrResult.confidence,
+            ocrResult.confidence
           );
         } else {
           console.log(
             "⚠️ Receipt needs manual review. Confidence:",
-            ocrResult.confidence,
+            ocrResult.confidence
           );
         }
       } catch (error) {
@@ -242,7 +224,7 @@ export class ProductService {
       categories(name, slug, type),
       product_images(image_url, is_primary, display_order),
       seller:users!seller_id(user_id, name, profile_picture, trust_score, kyc_status, created_at)
-    `,
+    `
       )
       .eq("product_id", productId)
       .single();
@@ -253,31 +235,29 @@ export class ProductService {
 
   async getProducts(filters: any = {}) {
     // If category filter is provided, first get the category_id
-    let categoryId: string | null = null;
-
+    let categoryIds: string[] = [];
+    
     if (filters.category) {
       // Look up category by slug (could be parent or child category)
       const { data: category } = await supabase
         .from("categories")
-        .select("category_id")
+        .select("category_id, parent_id")
         .eq("slug", filters.category)
         .single();
-
+      
       if (category) {
-        categoryId = category.category_id;
-      }
-
-      // If not found, also check if it's a parent category and get all child category IDs
-      if (!categoryId) {
-        const { data: parentCategory } = await supabase
-          .from("categories")
-          .select("category_id")
-          .eq("slug", filters.category)
-          .is("parent_id", null)
-          .single();
-
-        if (parentCategory) {
-          categoryId = parentCategory.category_id;
+        categoryIds.push(category.category_id);
+        
+        // If this is a parent category (no parent_id), also get all child categories
+        if (!category.parent_id) {
+          const { data: childCategories } = await supabase
+            .from("categories")
+            .select("category_id")
+            .eq("parent_id", category.category_id);
+          
+          if (childCategories && childCategories.length > 0) {
+            categoryIds.push(...childCategories.map(c => c.category_id));
+          }
         }
       }
     }
@@ -286,28 +266,17 @@ export class ProductService {
       .from("products")
       .select(
         `
-      *,
-      categories(name, slug),
-      product_images(image_url, is_primary)
-    `,
-        { count: "exact" },
+        *,
+        categories(name, slug),
+        product_images(image_url, is_primary)
+      `,
+        { count: "exact" }
       )
       .eq("status", "active")
       .order("created_at", { ascending: false });
 
-    // Filter by category_id instead of categories.slug
-    if (categoryId) {
-      // Get products in this category OR in child categories
-      const { data: childCategories } = await supabase
-        .from("categories")
-        .select("category_id")
-        .eq("parent_id", categoryId);
-
-      const categoryIds = [categoryId];
-      if (childCategories && childCategories.length > 0) {
-        categoryIds.push(...childCategories.map((c) => c.category_id));
-      }
-
+    // Filter by category_id(s) if we found any
+    if (categoryIds.length > 0) {
       query = query.in("category_id", categoryIds);
     }
 
