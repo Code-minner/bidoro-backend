@@ -83,8 +83,11 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
   try {
     const userId = req.user!.id;
 
-    // Get conversations where user is buyer or seller
-    const { data: conversations, error } = await supabase
+    console.log('Fetching conversations for user:', userId);
+
+    // Get conversations where user is buyer OR seller
+    // Using two separate queries and merging to ensure correct filtering
+    const { data: buyerConversations, error: buyerError } = await supabase
       .from('conversations')
       .select(`
         conversation_id,
@@ -100,11 +103,46 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
         created_at,
         updated_at
       `)
-      .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
-      .order('last_message_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false });
+      .eq('buyer_id', userId);
 
-    if (error) throw error;
+    const { data: sellerConversations, error: sellerError } = await supabase
+      .from('conversations')
+      .select(`
+        conversation_id,
+        buyer_id,
+        seller_id,
+        product_id,
+        order_id,
+        status,
+        last_message_at,
+        last_message_preview,
+        unread_count_buyer,
+        unread_count_seller,
+        created_at,
+        updated_at
+      `)
+      .eq('seller_id', userId);
+
+    if (buyerError) throw buyerError;
+    if (sellerError) throw sellerError;
+
+    // Merge and deduplicate conversations
+    const conversationMap = new Map();
+    
+    [...(buyerConversations || []), ...(sellerConversations || [])].forEach(conv => {
+      if (!conversationMap.has(conv.conversation_id)) {
+        conversationMap.set(conv.conversation_id, conv);
+      }
+    });
+
+    // Convert to array and sort by last_message_at
+    const conversations = Array.from(conversationMap.values()).sort((a, b) => {
+      const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : new Date(a.created_at).getTime();
+      const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : new Date(b.created_at).getTime();
+      return dateB - dateA; // Descending order (newest first)
+    });
+
+    console.log(`Found ${conversations.length} conversations for user ${userId}`);
 
     // Get user profiles for all participants
     const participantIds = new Set<string>();
@@ -560,6 +598,7 @@ router.post('/conversations/:conversationId/read', authenticateToken, async (req
     const { conversationId } = req.params;
     const userId = req.user!.id;
 
+    // Mark messages as read
     const { error } = await supabase
       .rpc('mark_messages_as_read', {
         p_conversation_id: conversationId,
@@ -567,6 +606,19 @@ router.post('/conversations/:conversationId/read', authenticateToken, async (req
       });
 
     if (error) throw error;
+
+    // =============================================
+    // ALSO MARK RELATED NOTIFICATIONS AS READ
+    // =============================================
+    try {
+      const count = await notificationService.markMessageNotificationsAsRead(userId, conversationId);
+      if (count > 0) {
+        console.log(`Marked ${count} message notification(s) as read for conversation ${conversationId}`);
+      }
+    } catch (notifError) {
+      console.error('Failed to mark notifications as read:', notifError);
+      // Don't fail the request if notification update fails
+    }
 
     res.json({
       success: true,

@@ -211,7 +211,7 @@ class NotificationService {
   async markAllAsRead(userId: string, category?: NotificationCategory): Promise<number> {
     let query = supabase
       .from('notifications')
-      .update({ is_read: true })
+      .update({ is_read: true, read_at: new Date().toISOString() })
       .eq('user_id', userId)
       .eq('is_read', false);
 
@@ -222,6 +222,28 @@ class NotificationService {
     const { data, error } = await query.select();
 
     if (error) throw new Error(`Failed to mark notifications as read: ${error.message}`);
+    return data?.length || 0;
+  }
+
+  async markMessageNotificationsAsRead(userId: string, conversationId: string): Promise<number> {
+    // Mark all unread message notifications for this conversation as read
+    const { data, error } = await supabase
+      .from('notifications')
+      .update({ 
+        is_read: true, 
+        read_at: new Date().toISOString() 
+      })
+      .eq('user_id', userId)
+      .eq('category', 'messages')
+      .eq('is_read', false)
+      .contains('metadata', { conversation_id: conversationId })
+      .select();
+
+    if (error) {
+      console.error('Failed to mark message notifications as read:', error);
+      return 0;
+    }
+    
     return data?.length || 0;
   }
 
