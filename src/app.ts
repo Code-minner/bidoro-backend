@@ -37,7 +37,7 @@ import cartRoutes from './routes/cart';
 import checkoutRoutes from './routes/checkout';
 import searchRoutes from "./routes/search";
 import oauthRoutes from './routes/oauth';
-
+import adminDashboardRoutes from './routes/admin-dashboard';
 
 
 
@@ -146,6 +146,8 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/checkout', checkoutRoutes);
 
 app.use("/api/search", searchRoutes);
+
+app.use('/api/admin/dashboard', adminDashboardRoutes);
 
 // ====================
 // Global error handler

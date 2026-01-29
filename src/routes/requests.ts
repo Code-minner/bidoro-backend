@@ -8,6 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 import { authenticateToken, optionalAuth, AuthRequest } from '../middleware/auth';
 import { Response } from 'express';
+import { notificationService } from '../services/notification.service';
 
 const router = Router();
 
@@ -706,6 +707,264 @@ router.post('/:requestId/respond', authenticateToken, async (req: AuthRequest, r
     res.status(500).json({
       success: false,
       message: 'Failed to send response',
+      error: error.message
+    });
+  }
+});
+
+// ================================================
+// BUYER: ACCEPT A SELLER'S RESPONSE
+// ================================================
+router.post('/responses/:responseId/accept', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { responseId } = req.params;
+    const buyerId = req.user!.id;
+
+    // Get the response with request details
+    const { data: response, error: responseError } = await supabase
+      .from('request_responses')
+      .select(`
+        *,
+        product_requests!inner (
+          request_id,
+          user_id,
+          product_name,
+          status,
+          is_active
+        )
+      `)
+      .eq('response_id', responseId)
+      .single();
+
+    if (responseError || !response) {
+      return res.status(404).json({
+        success: false,
+        message: 'Response not found'
+      });
+    }
+
+    // Verify the buyer owns this request
+    if (response.product_requests.user_id !== buyerId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only accept responses to your own requests'
+      });
+    }
+
+    // Check if response is still pending
+    if (response.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Response has already been ${response.status}`
+      });
+    }
+
+    // 1. Update the accepted response
+    const { error: acceptError } = await supabase
+      .from('request_responses')
+      .update({
+        status: 'accepted',
+        updated_at: new Date().toISOString()
+      })
+      .eq('response_id', responseId);
+
+    if (acceptError) throw acceptError;
+
+    // 2. Reject all other pending responses for this request
+    await supabase
+      .from('request_responses')
+      .update({
+        status: 'rejected',
+        updated_at: new Date().toISOString()
+      })
+      .eq('request_id', response.request_id)
+      .eq('status', 'pending')
+      .neq('response_id', responseId);
+
+    // 3. Update the request status to fulfilled
+    await supabase
+      .from('product_requests')
+      .update({
+        status: 'fulfilled',
+        is_active: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('request_id', response.request_id);
+
+    // 4. Get buyer info for notification
+    const { data: buyer } = await supabase
+      .from('users')
+      .select('name')
+      .eq('user_id', buyerId)
+      .single();
+
+    // 5. Send notification to the winning seller
+    try {
+      await notificationService.createNotification({
+        user_id: response.seller_id,
+        title: 'Offer Accepted! 🎉',
+        message: `${buyer?.name || 'A buyer'} has accepted your offer of ₦${response.offered_price?.toLocaleString() || 'N/A'} for "${response.product_requests.product_name}"`,
+        category: 'orders',
+        type: 'success',
+        action_url: `/seller/requests`,
+        metadata: {
+          request_id: response.request_id,
+          response_id: responseId,
+          offered_price: response.offered_price,
+          product_name: response.product_requests.product_name
+        }
+      });
+    } catch (notifError) {
+      console.error('Failed to send notification:', notifError);
+    }
+
+    // 6. Notify other sellers that their offers were not selected
+    try {
+      const { data: otherResponses } = await supabase
+        .from('request_responses')
+        .select('seller_id')
+        .eq('request_id', response.request_id)
+        .neq('response_id', responseId);
+
+      if (otherResponses && otherResponses.length > 0) {
+        const uniqueSellerIds = [...new Set(otherResponses.map(r => r.seller_id))];
+        
+        for (const sellerId of uniqueSellerIds) {
+          if (sellerId !== response.seller_id) {
+            await notificationService.createNotification({
+              user_id: sellerId,
+              title: 'Offer Not Selected',
+              message: `Another seller's offer was accepted for "${response.product_requests.product_name}"`,
+              category: 'orders',
+              type: 'info',
+              metadata: {
+                request_id: response.request_id,
+                product_name: response.product_requests.product_name
+              }
+            });
+          }
+        }
+      }
+    } catch (notifError) {
+      console.error('Failed to notify other sellers:', notifError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Offer accepted successfully',
+      data: {
+        responseId,
+        sellerId: response.seller_id,
+        requestId: response.request_id,
+        offeredPrice: response.offered_price
+      }
+    });
+  } catch (error: any) {
+    console.error('Error accepting response:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to accept offer',
+      error: error.message
+    });
+  }
+});
+
+// ================================================
+// BUYER: REJECT A SELLER'S RESPONSE
+// ================================================
+router.post('/responses/:responseId/reject', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { responseId } = req.params;
+    const { reason } = req.body;
+    const buyerId = req.user!.id;
+
+    // Get the response with request details
+    const { data: response, error: responseError } = await supabase
+      .from('request_responses')
+      .select(`
+        *,
+        product_requests!inner (
+          request_id,
+          user_id,
+          product_name
+        )
+      `)
+      .eq('response_id', responseId)
+      .single();
+
+    if (responseError || !response) {
+      return res.status(404).json({
+        success: false,
+        message: 'Response not found'
+      });
+    }
+
+    // Verify the buyer owns this request
+    if (response.product_requests.user_id !== buyerId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only reject responses to your own requests'
+      });
+    }
+
+    // Check if response is still pending
+    if (response.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Response has already been ${response.status}`
+      });
+    }
+
+    // Update the response status
+    const { error: updateError } = await supabase
+      .from('request_responses')
+      .update({
+        status: 'rejected',
+        updated_at: new Date().toISOString()
+      })
+      .eq('response_id', responseId);
+
+    if (updateError) throw updateError;
+
+    // Get buyer info for notification
+    const { data: buyer } = await supabase
+      .from('users')
+      .select('name')
+      .eq('user_id', buyerId)
+      .single();
+
+    // Send notification to seller
+    try {
+      await notificationService.createNotification({
+        user_id: response.seller_id,
+        title: 'Offer Declined',
+        message: `${buyer?.name || 'The buyer'} has declined your offer for "${response.product_requests.product_name}"${reason ? `. Reason: ${reason}` : ''}`,
+        category: 'orders',
+        type: 'warning',
+        metadata: {
+          request_id: response.request_id,
+          response_id: responseId,
+          product_name: response.product_requests.product_name,
+          reason: reason || null
+        }
+      });
+    } catch (notifError) {
+      console.error('Failed to send notification:', notifError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Offer rejected',
+      data: {
+        responseId,
+        status: 'rejected'
+      }
+    });
+  } catch (error: any) {
+    console.error('Error rejecting response:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reject offer',
       error: error.message
     });
   }

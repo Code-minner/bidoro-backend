@@ -214,7 +214,7 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
 router.post('/conversations/get-or-create', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const { otherUserId, productId } = req.body;
+    const { otherUserId, productId, requestId } = req.body;
 
     if (!otherUserId) {
       return res.status(400).json({
@@ -223,37 +223,31 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       });
     }
 
-    const validProductId = productId || null;
-
-    // Check if conversation already exists
-    let query = supabase
+    // Find ANY existing conversation between these two users
+    // Order by last_message_at DESC NULLS LAST to prioritize conversations with messages
+    const { data: existingConversations, error: searchError } = await supabase
       .from('conversations')
-      .select('conversation_id');
-    
-    if (validProductId) {
-      query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.eq.${validProductId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.eq.${validProductId})`);
-    } else {
-      query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.is.null),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.is.null)`);
-    }
-    
-    const { data: existingConv, error: searchError } = await query
-      .limit(1)
-      .maybeSingle();
+      .select('conversation_id, product_id, last_message_at, created_at')
+      .or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId})`)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1);
 
     if (searchError) throw searchError;
 
-    if (existingConv) {
+    // If conversation exists, return it
+    if (existingConversations && existingConversations.length > 0) {
       return res.json({
         success: true,
         data: { 
-          conversationId: existingConv.conversation_id,
+          conversationId: existingConversations[0].conversation_id,
           isNew: false
         }
       });
     }
 
-    // Create new conversation
+    // No conversation exists, create a new one
     const conversationId = uuidv4();
+    const validProductId = productId || null;
 
     const { data: newConv, error: createError } = await supabase
       .from('conversations')
