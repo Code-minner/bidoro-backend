@@ -38,7 +38,7 @@ import checkoutRoutes from './routes/checkout';
 import searchRoutes from "./routes/search";
 import oauthRoutes from './routes/oauth';
 import walletRoutes from './routes/walletRoutes';
-
+import adminProductsRoutes from './routes/admin/products';
 
 
 
@@ -120,6 +120,7 @@ app.use('/api/products', productDraftRoutes);
 app.use('/api/admin/sellers', adminSellersRoutes);
 app.use('/api/messages', messagesRouter);
 app.use('/api/admin', adminCustomerRoutes);
+app.use('/api/admin/products', adminProductsRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/sellers', sellerPublicRoutes);
 app.use('/api/seller', sellerBankAccountRoutes); 
