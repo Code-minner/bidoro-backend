@@ -1,4 +1,5 @@
 // src/routes/products.ts
+// Updated with proper verification response
 import express from 'express';
 import { ProductService } from '../services/productService';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
@@ -13,7 +14,7 @@ const productService = new ProductService();
 
 /**
  * POST /api/products
- * Create a new product
+ * Create a new product with optional AI verification
  */
 router.post('/', authenticateToken, async (req: AuthRequest, res) => {
   try {
@@ -33,6 +34,9 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       });
     }
 
+    console.log("📦 Creating product for user:", userId);
+    console.log("📄 Verification data received:", verification);
+
     const result = await productService.createProduct({
       sellerId: userId,
       productCore,
@@ -41,14 +45,34 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       verification
     });
 
+    // Determine response message based on status
+    let message = 'Product created successfully!';
+    let description = '';
+
+    if (result.autoApproved) {
+      message = 'Product approved and now live!';
+      description = 'Your receipt was verified automatically.';
+    } else if (result.product.status === 'pending') {
+      message = 'Product submitted for review';
+      description = 'Our team will review and approve it within 1-2 business days.';
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Product created successfully!',
+      message,
+      description,
       data: {
         productId: result.product.product_id,
         slug: result.product.slug,
         status: result.product.status,
-        verificationRequired: result.product.verification_required
+        verificationStatus: result.product.verification_status,
+        verificationRequired: result.product.verification_required,
+        autoApproved: result.autoApproved,
+        aiVerification: result.verification ? {
+          confidence: result.verification.confidence,
+          isValid: result.verification.isValid,
+          details: result.verification.details
+        } : null
       }
     });
 
@@ -100,12 +124,11 @@ router.get('/my-products', authenticateToken, async (req: AuthRequest, res) => {
           
           return {
             ...product,
-            categories: parentCat || category, // Parent becomes main category
-            subcategory: { name: category.name, slug: category.slug } // Current becomes subcategory
+            categories: parentCat || category,
+            subcategory: { name: category.name, slug: category.slug }
           };
         }
         
-        // No parent - this IS the main category, no subcategory
         return {
           ...product,
           subcategory: null
@@ -135,7 +158,6 @@ router.get('/featured-reels', async (req, res) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 8;
 
-    // Get active products that have videos
     const { data: products, error } = await supabase
       .from('products')
       .select(`
@@ -156,17 +178,14 @@ router.get('/featured-reels', async (req, res) => {
       throw error;
     }
 
-    // Get seller info for each product
     const reelsWithSeller = await Promise.all(
       (products || []).map(async (product) => {
-        // Get seller name
         const { data: seller } = await supabase
           .from('users')
           .select('name, profile_picture')
           .eq('user_id', product.seller_id)
           .single();
 
-        // Get primary image as thumbnail
         const primaryImage = product.product_images?.find((img: any) => img.is_primary);
         const thumbnail = primaryImage?.image_url || product.product_images?.[0]?.image_url || null;
 
@@ -201,8 +220,95 @@ router.get('/featured-reels', async (req, res) => {
 });
 
 /**
+ * POST /api/products/draft
+ * Save product draft
+ */
+router.post('/draft', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const { draftData, draftId } = req.body;
+
+    if (draftId) {
+      // Update existing draft
+      const { data, error } = await supabase
+        .from('product_drafts')
+        .update({
+          draft_data: draftData,
+          updated_at: new Date().toISOString()
+        })
+        .eq('draft_id', draftId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        data: { draftId: data.draft_id }
+      });
+    } else {
+      // Create new draft
+      const { data, error } = await supabase
+        .from('product_drafts')
+        .insert({
+          user_id: userId,
+          draft_data: draftData,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return res.json({
+        success: true,
+        data: { draftId: data.draft_id }
+      });
+    }
+  } catch (error: any) {
+    console.error('❌ Draft save error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save draft'
+    });
+  }
+});
+
+/**
+ * DELETE /api/products/draft/:draftId
+ * Delete a draft
+ */
+router.delete('/draft/:draftId', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const { draftId } = req.params;
+
+    const { error } = await supabase
+      .from('product_drafts')
+      .delete()
+      .eq('draft_id', draftId)
+      .eq('user_id', userId);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: 'Draft deleted'
+    });
+  } catch (error: any) {
+    console.error('❌ Draft delete error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete draft'
+    });
+  }
+});
+
+/**
  * GET /api/products
- * Get all products with filters
+ * Get all products with filters (PUBLIC - only active products)
  */
 router.get('/', async (req, res) => {
   try {
@@ -234,12 +340,11 @@ router.get('/', async (req, res) => {
 
 // ============================================================
 // PARAMETERIZED ROUTES - These must come AFTER specific routes
-// Order: /status and /duplicate before generic /:id
 // ============================================================
 
 /**
  * PATCH /api/products/:productId/status
- * Update product status (pause, activate, draft)
+ * Update product status (seller can pause/activate their own products)
  */
 router.patch('/:productId/status', authenticateToken, async (req: AuthRequest, res) => {
   try {
@@ -247,9 +352,7 @@ router.patch('/:productId/status', authenticateToken, async (req: AuthRequest, r
     const { status } = req.body;
     const userId = req.user!.id;
 
-    console.log(`📝 Status update request: Product ${productId} -> ${status} by user ${userId}`);
-
-    // Validate status
+    // Sellers can only set these statuses
     const validStatuses = ['active', 'paused', 'draft'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
@@ -258,22 +361,20 @@ router.patch('/:productId/status', authenticateToken, async (req: AuthRequest, r
       });
     }
 
-    // First verify the product belongs to this seller
+    // Verify ownership
     const { data: product, error: fetchError } = await supabase
       .from('products')
-      .select('product_id, seller_id, name')
+      .select('product_id, seller_id, name, verification_status')
       .eq('product_id', productId)
       .single();
 
     if (fetchError || !product) {
-      console.error('Product not found:', fetchError);
       return res.status(404).json({
         success: false,
         error: 'Product not found'
       });
     }
 
-    // Check ownership
     if (product.seller_id !== userId) {
       return res.status(403).json({
         success: false,
@@ -281,7 +382,14 @@ router.patch('/:productId/status', authenticateToken, async (req: AuthRequest, r
       });
     }
 
-    // Update the status
+    // Don't allow activating if product is still pending verification
+    if (status === 'active' && product.verification_status === 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot activate product that is still pending verification'
+      });
+    }
+
     const { data: updatedProduct, error: updateError } = await supabase
       .from('products')
       .update({ 
@@ -293,11 +401,8 @@ router.patch('/:productId/status', authenticateToken, async (req: AuthRequest, r
       .single();
 
     if (updateError) {
-      console.error('Update product status error:', updateError);
       throw updateError;
     }
-
-    console.log(`✅ Product "${product.name}" status updated to ${status}`);
 
     res.json({
       success: true,
@@ -323,15 +428,9 @@ router.post('/:productId/duplicate', authenticateToken, async (req: AuthRequest,
     const { productId } = req.params;
     const userId = req.user!.id;
 
-    console.log(`📋 Duplicate request: Product ${productId} by user ${userId}`);
-
-    // Fetch the original product with images
     const { data: originalProduct, error: fetchError } = await supabase
       .from('products')
-      .select(`
-        *,
-        product_images (*)
-      `)
+      .select(`*, product_images (*)`)
       .eq('product_id', productId)
       .single();
 
@@ -342,7 +441,6 @@ router.post('/:productId/duplicate', authenticateToken, async (req: AuthRequest,
       });
     }
 
-    // Check ownership
     if (originalProduct.seller_id !== userId) {
       return res.status(403).json({
         success: false,
@@ -350,29 +448,36 @@ router.post('/:productId/duplicate', authenticateToken, async (req: AuthRequest,
       });
     }
 
-    // Prepare new product data (remove IDs and timestamps)
     const { 
       product_id, 
       created_at, 
       updated_at, 
       views_count,
+      favorites_count,
+      rating_average,
+      rating_count,
       slug,
       product_images,
       ...productData 
     } = originalProduct;
 
-    // Generate new slug
     const newSlug = `${slug}-copy-${Date.now()}`;
 
-    // Create the duplicate product
+    // Duplicated products start as pending
     const { data: newProduct, error: createError } = await supabase
       .from('products')
       .insert({
         ...productData,
         name: `${productData.name} (Copy)`,
         slug: newSlug,
-        status: 'draft',
+        status: 'pending',  // New copies need verification
+        verification_status: 'pending',
+        verification_required: true,
+        receipt_verified: false,
         views_count: 0,
+        favorites_count: 0,
+        rating_average: 0,
+        rating_count: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
@@ -380,11 +485,10 @@ router.post('/:productId/duplicate', authenticateToken, async (req: AuthRequest,
       .single();
 
     if (createError) {
-      console.error('Duplicate product error:', createError);
       throw createError;
     }
 
-    // Duplicate product images if they exist
+    // Duplicate images
     if (product_images && product_images.length > 0) {
       const newImages = product_images.map((img: any) => ({
         product_id: newProduct.product_id,
@@ -394,21 +498,13 @@ router.post('/:productId/duplicate', authenticateToken, async (req: AuthRequest,
         created_at: new Date().toISOString()
       }));
 
-      const { error: imagesError } = await supabase
-        .from('product_images')
-        .insert(newImages);
-
-      if (imagesError) {
-        console.error('Duplicate images error:', imagesError);
-      }
+      await supabase.from('product_images').insert(newImages);
     }
-
-    console.log(`✅ Product duplicated: ${originalProduct.name} -> ${newProduct.name}`);
 
     res.status(201).json({
       success: true,
       data: newProduct,
-      message: 'Product duplicated successfully. It has been saved as a draft.'
+      message: 'Product duplicated. It will need verification before going live.'
     });
 
   } catch (error: any) {
@@ -422,16 +518,13 @@ router.post('/:productId/duplicate', authenticateToken, async (req: AuthRequest,
 
 /**
  * DELETE /api/products/:productId
- * Delete a product and all related data (images, reviews, etc.)
+ * Delete a product
  */
 router.delete('/:productId', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { productId } = req.params;
     const userId = req.user!.id;
 
-    console.log(`🗑️ Delete request: Product ${productId} by user ${userId}`);
-
-    // First verify the product belongs to this seller
     const { data: product, error: fetchError } = await supabase
       .from('products')
       .select('product_id, seller_id, name')
@@ -445,7 +538,6 @@ router.delete('/:productId', authenticateToken, async (req: AuthRequest, res) =>
       });
     }
 
-    // Check ownership
     if (product.seller_id !== userId) {
       return res.status(403).json({
         success: false,
@@ -453,62 +545,22 @@ router.delete('/:productId', authenticateToken, async (req: AuthRequest, res) =>
       });
     }
 
-    // Delete in order to respect foreign key constraints:
+    // Delete related records
+    await supabase.from('product_images').delete().eq('product_id', productId);
     
-    // 1. Delete reviews for this product
-    const { error: reviewsDeleteError } = await supabase
-      .from('reviews')
-      .delete()
-      .eq('product_id', productId);
+    try { await supabase.from('reviews').delete().eq('product_id', productId); } catch (e) {}
+    try { await supabase.from('favorites').delete().eq('product_id', productId); } catch (e) {}
+    try { await supabase.from('cart_items').delete().eq('product_id', productId); } catch (e) {}
+    try { await supabase.from('product_verifications').delete().eq('product_id', productId); } catch (e) {}
 
-    if (reviewsDeleteError) {
-      console.error('Delete reviews error:', reviewsDeleteError);
-      // Continue anyway
-    }
-
-    // 2. Delete product images
-    const { error: imagesDeleteError } = await supabase
-      .from('product_images')
-      .delete()
-      .eq('product_id', productId);
-
-    if (imagesDeleteError) {
-      console.error('Delete product images error:', imagesDeleteError);
-      // Continue anyway
-    }
-
-    // 3. Delete from favorites/wishlists if table exists
-    try {
-      await supabase
-        .from('favorites')
-        .delete()
-        .eq('product_id', productId);
-    } catch (e) {
-      // Table might not exist
-    }
-
-    // 4. Delete from cart_items if table exists
-    try {
-      await supabase
-        .from('cart_items')
-        .delete()
-        .eq('product_id', productId);
-    } catch (e) {
-      // Table might not exist
-    }
-
-    // 5. Finally delete the product
     const { error: deleteError } = await supabase
       .from('products')
       .delete()
       .eq('product_id', productId);
 
     if (deleteError) {
-      console.error('Delete product error:', deleteError);
       throw deleteError;
     }
-
-    console.log(`✅ Product deleted: ${product.name}`);
 
     res.json({
       success: true,
@@ -526,8 +578,7 @@ router.delete('/:productId', authenticateToken, async (req: AuthRequest, res) =>
 
 /**
  * GET /api/products/:id
- * Get single product by ID with seller store info
- * NOTE: This must be LAST among parameterized routes!
+ * Get single product by ID (PUBLIC)
  */
 router.get('/:id', async (req, res) => {
   try {
@@ -544,7 +595,6 @@ router.get('/:id', async (req, res) => {
       .single();
 
     if (error || !product) {
-      console.error('Product query error:', error);
       return res.status(404).json({
         success: false,
         error: 'Product not found'
@@ -568,15 +618,17 @@ router.get('/:id', async (req, res) => {
       }
     }
 
-    // Get seller info separately
+    // Get seller info
     const { data: sellerData } = await supabase
       .from('users')
       .select('user_id, name, profile_picture, trust_score, kyc_status, created_at, location_state, location_city')
       .eq('user_id', product.seller_id)
       .single();
 
-    // Get seller's store name from kyc_applications
+    // Get store name
     let storeName = null;
+    let storeLogo = null;
+    
     if (product.seller_id) {
       const { data: kycApp } = await supabase
         .from('kyc_applications')
@@ -587,11 +639,7 @@ router.get('/:id', async (req, res) => {
         .single();
       
       storeName = kycApp?.store_name || null;
-    }
 
-    // Get seller's store logo from kyc_documents
-    let storeLogo = null;
-    if (product.seller_id) {
       const { data: logoDoc } = await supabase
         .from('kyc_documents')
         .select('file_url')

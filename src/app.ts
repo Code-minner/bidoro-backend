@@ -39,12 +39,14 @@ import searchRoutes from "./routes/search";
 import oauthRoutes from './routes/oauth';
 import walletRoutes from './routes/walletRoutes';
 import adminProductsRoutes from './routes/admin/products';
-
+import reportsRoutes from './routes/reports';
 
 
 
 
 import notificationRoutes from './routes/notification.routes';
+
+import adminRequestsRoutes from './routes/admin/requests';
 
 
 
@@ -150,7 +152,8 @@ app.use("/api/search", searchRoutes);
 
 
 app.use('/api/wallet', walletRoutes);
-
+app.use('/api/admin/reports', reportsRoutes);
+app.use('/api/admin/requests', adminRequestsRoutes);
 
 // ====================
 // Global error handler
