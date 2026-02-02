@@ -44,11 +44,16 @@ import adminSettingsRoutes from './routes/admin-settings';
 
 
 
+import walletRoutes from './routes/walletRoutes';
+import adminProductsRoutes from './routes/admin/products';
+import reportsRoutes from './routes/reports';
 
 
 
 
 import notificationRoutes from './routes/notification.routes';
+
+import adminRequestsRoutes from './routes/admin/requests';
 
 
 
@@ -124,6 +129,7 @@ app.use('/api/products', productDraftRoutes);
 app.use('/api/admin/sellers', adminSellersRoutes);
 app.use('/api/messages', messagesRouter);
 app.use('/api/admin', adminCustomerRoutes);
+app.use('/api/admin/products', adminProductsRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/sellers', sellerPublicRoutes);
 app.use('/api/seller', sellerBankAccountRoutes); 
@@ -156,6 +162,10 @@ app.use('/api/admin/dashboard', adminDashboardRoutes);
 app.use('/api/admin/budget-bids', adminBudgetBidsRoutes);
 
 app.use('/api/admin/settings', adminSettingsRoutes);
+
+app.use('/api/wallet', walletRoutes);
+app.use('/api/admin/reports', reportsRoutes);
+app.use('/api/admin/requests', adminRequestsRoutes);
 
 // ====================
 // Global error handler
