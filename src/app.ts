@@ -38,6 +38,10 @@ import checkoutRoutes from './routes/checkout';
 import searchRoutes from "./routes/search";
 import oauthRoutes from './routes/oauth';
 import adminDashboardRoutes from './routes/admin-dashboard';
+import adminBudgetBidsRoutes from './routes/admin-budgetBids';
+import adminSettingsRoutes from './routes/admin-settings';
+
+
 
 
 
@@ -148,6 +152,10 @@ app.use('/api/checkout', checkoutRoutes);
 app.use("/api/search", searchRoutes);
 
 app.use('/api/admin/dashboard', adminDashboardRoutes);
+
+app.use('/api/admin/budget-bids', adminBudgetBidsRoutes);
+
+app.use('/api/admin/settings', adminSettingsRoutes);
 
 // ====================
 // Global error handler
