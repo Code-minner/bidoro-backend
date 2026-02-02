@@ -55,6 +55,9 @@ import notificationRoutes from './routes/notification.routes';
 
 import adminRequestsRoutes from './routes/admin/requests';
 
+import adminUsersRouter from './routes/admin/admin-users';
+import rolesRouter from './routes/admin/roles';
+
 
 
 
@@ -166,6 +169,12 @@ app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/admin/reports', reportsRoutes);
 app.use('/api/admin/requests', adminRequestsRoutes);
+app.use('/api/admin/admin-users', adminUsersRouter);
+app.use('/api/admin/roles', rolesRouter);
+
+
+
+
 
 // ====================
 // Global error handler
