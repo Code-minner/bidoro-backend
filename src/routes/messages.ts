@@ -83,8 +83,11 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
   try {
     const userId = req.user!.id;
 
-    // Get conversations where user is buyer or seller
-    const { data: conversations, error } = await supabase
+    console.log('Fetching conversations for user:', userId);
+
+    // Get conversations where user is buyer OR seller
+    // Using two separate queries and merging to ensure correct filtering
+    const { data: buyerConversations, error: buyerError } = await supabase
       .from('conversations')
       .select(`
         conversation_id,
@@ -97,14 +100,51 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
         last_message_preview,
         unread_count_buyer,
         unread_count_seller,
+        referenced_items,
         created_at,
         updated_at
       `)
-      .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
-      .order('last_message_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false });
+      .eq('buyer_id', userId);
 
-    if (error) throw error;
+    const { data: sellerConversations, error: sellerError } = await supabase
+      .from('conversations')
+      .select(`
+        conversation_id,
+        buyer_id,
+        seller_id,
+        product_id,
+        order_id,
+        status,
+        last_message_at,
+        last_message_preview,
+        unread_count_buyer,
+        unread_count_seller,
+        referenced_items,
+        created_at,
+        updated_at
+      `)
+      .eq('seller_id', userId);
+
+    if (buyerError) throw buyerError;
+    if (sellerError) throw sellerError;
+
+    // Merge and deduplicate conversations
+    const conversationMap = new Map();
+    
+    [...(buyerConversations || []), ...(sellerConversations || [])].forEach(conv => {
+      if (!conversationMap.has(conv.conversation_id)) {
+        conversationMap.set(conv.conversation_id, conv);
+      }
+    });
+
+    // Convert to array and sort by last_message_at
+    const conversations = Array.from(conversationMap.values()).sort((a, b) => {
+      const dateA = a.last_message_at ? new Date(a.last_message_at).getTime() : new Date(a.created_at).getTime();
+      const dateB = b.last_message_at ? new Date(b.last_message_at).getTime() : new Date(b.created_at).getTime();
+      return dateB - dateA; // Descending order (newest first)
+    });
+
+    console.log(`Found ${conversations.length} conversations for user ${userId}`);
 
     // Get user profiles for all participants
     const participantIds = new Set<string>();
@@ -151,6 +191,7 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
         lastMessage: conv.last_message_preview,
         lastMessageAt: conv.last_message_at,
         unreadCount: unreadCount || 0,
+        referencedItems: conv.referenced_items || [],
         createdAt: conv.created_at,
         updatedAt: conv.updated_at
       };
@@ -172,11 +213,12 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
 
 // ================================================
 // GET OR CREATE CONVERSATION
+// One chat per user pair - context stored separately
 // ================================================
 router.post('/conversations/get-or-create', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const { otherUserId, productId } = req.body;
+    const { otherUserId, productId, requestId } = req.body;
 
     if (!otherUserId) {
       return res.status(400).json({
@@ -185,61 +227,108 @@ router.post('/conversations/get-or-create', authenticateToken, async (req: AuthR
       });
     }
 
-    const validProductId = productId || null;
-
-    // Check if conversation already exists
-    let query = supabase
+    // Find ANY existing conversation between these two users
+    const { data: existingConversations, error: searchError } = await supabase
       .from('conversations')
-      .select('conversation_id');
-    
-    if (validProductId) {
-      query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.eq.${validProductId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.eq.${validProductId})`);
-    } else {
-      query = query.or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId},product_id.is.null),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId},product_id.is.null)`);
-    }
-    
-    const { data: existingConv, error: searchError } = await query
-      .limit(1)
-      .maybeSingle();
+      .select('conversation_id, product_id, last_message_at, created_at')
+      .or(`and(buyer_id.eq.${currentUserId},seller_id.eq.${otherUserId}),and(buyer_id.eq.${otherUserId},seller_id.eq.${currentUserId})`)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(1);
 
     if (searchError) throw searchError;
 
-    if (existingConv) {
+    // Prepare context reference if provided
+    const contextRef = productId 
+      ? { type: 'product', id: productId, added_at: new Date().toISOString() }
+      : requestId 
+        ? { type: 'request', id: requestId, added_at: new Date().toISOString() }
+        : null;
+
+    // If conversation exists, return it
+    if (existingConversations && existingConversations.length > 0) {
+      const existingConv = existingConversations[0];
+      
+      // Try to add context to referenced_items (optional - column may not exist)
+      if (contextRef) {
+        try {
+          const { data: convWithRefs } = await supabase
+            .from('conversations')
+            .select('referenced_items')
+            .eq('conversation_id', existingConv.conversation_id)
+            .single();
+          
+          const existingRefs = convWithRefs?.referenced_items || [];
+          const alreadyReferenced = existingRefs.some(
+            (ref: any) => ref.type === contextRef.type && ref.id === contextRef.id
+          );
+          
+          if (!alreadyReferenced) {
+            await supabase
+              .from('conversations')
+              .update({
+                referenced_items: [...existingRefs, contextRef],
+                updated_at: new Date().toISOString()
+              })
+              .eq('conversation_id', existingConv.conversation_id);
+          }
+        } catch (refError) {
+          // Column might not exist - that's okay
+          console.log('Could not update referenced_items:', refError);
+        }
+      }
+
       return res.json({
         success: true,
         data: { 
           conversationId: existingConv.conversation_id,
-          isNew: false
+          isNew: false,
+          context: contextRef
         }
       });
     }
 
-    // Create new conversation
+    // No conversation exists, create a new one
     const conversationId = uuidv4();
+
+    // Build insert data - only include referenced_items if it might exist
+    const insertData: any = {
+      conversation_id: conversationId,
+      buyer_id: currentUserId,
+      seller_id: otherUserId,
+      product_id: productId || null,
+      status: 'active',
+      unread_count_buyer: 0,
+      unread_count_seller: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
 
     const { data: newConv, error: createError } = await supabase
       .from('conversations')
-      .insert({
-        conversation_id: conversationId,
-        buyer_id: currentUserId,
-        seller_id: otherUserId,
-        product_id: validProductId,
-        status: 'active',
-        unread_count_buyer: 0,
-        unread_count_seller: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
+      .insert(insertData)
       .select('conversation_id')
       .single();
 
     if (createError) throw createError;
 
+    // Try to set referenced_items separately (in case column exists)
+    if (contextRef) {
+      try {
+        await supabase
+          .from('conversations')
+          .update({ referenced_items: [contextRef] })
+          .eq('conversation_id', conversationId);
+      } catch (refError) {
+        console.log('Could not set referenced_items:', refError);
+      }
+    }
+
     res.json({
       success: true,
       data: { 
         conversationId: newConv.conversation_id,
-        isNew: true
+        isNew: true,
+        context: contextRef
       }
     });
   } catch (error: any) {
@@ -331,13 +420,21 @@ router.get('/conversations/:conversationId/messages', authenticateToken, async (
 });
 
 // ================================================
-// SEND MESSAGE - WITH NOTIFICATION
+// SEND MESSAGE - WITH NOTIFICATION AND CONTEXT
 // ================================================
 router.post('/conversations/:conversationId/messages', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { conversationId } = req.params;
-    const { content, productReference } = req.body;
+    const { content, productReference, context } = req.body;
+    // context = { type: 'product' | 'request', id: string, title?: string }
+    
+    // DEBUG: Log the user object
+    console.log('DEBUG req.user:', req.user);
+    
+    // Handle both 'id' and 'userId' from JWT
     const userId = req.user!.id;
+    
+    console.log('DEBUG userId:', userId);
 
     if (!content || content.trim().length === 0) {
       return res.status(400).json({
@@ -365,21 +462,32 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
       ? conversation.seller_id 
       : conversation.buyer_id;
 
-    // Determine message type
+    // Determine message type - context messages are still 'text' type
+    // (context info is stored in metadata, not message_type)
     const messageType = productReference ? 'product' : 'text';
     
-    // Build metadata
-    const metadata = productReference ? {
-      productId: productReference.productId,
-      productName: productReference.productName,
-      productPrice: productReference.productPrice,
-      productImage: productReference.productImage,
-      condition: productReference.condition,
-      negotiable: productReference.negotiable,
-      verified: productReference.verified
-    } : null;
+    // Build metadata - include context if provided
+    let metadata: any = null;
+    
+    if (productReference) {
+      metadata = {
+        productId: productReference.productId,
+        productName: productReference.productName,
+        productPrice: productReference.productPrice,
+        productImage: productReference.productImage,
+        condition: productReference.condition,
+        negotiable: productReference.negotiable,
+        verified: productReference.verified
+      };
+    } else if (context) {
+      metadata = {
+        context_type: context.type,
+        context_id: context.id,
+        context_title: context.title
+      };
+    }
 
-    // Insert message
+    // Insert message with context
     const { data: message, error } = await supabase
       .from('messages')
       .insert({
@@ -396,6 +504,40 @@ router.post('/conversations/:conversationId/messages', authenticateToken, async 
       .single();
 
     if (error) throw error;
+
+    // If context provided, try to add to conversation's referenced_items
+    // This is optional - if the column doesn't exist, we just skip it
+    if (context && context.type && context.id) {
+      try {
+        const { data: convData } = await supabase
+          .from('conversations')
+          .select('referenced_items')
+          .eq('conversation_id', conversationId)
+          .single();
+        
+        const existingRefs = convData?.referenced_items || [];
+        const alreadyReferenced = existingRefs.some(
+          (ref: any) => ref.type === context.type && ref.id === context.id
+        );
+        
+        if (!alreadyReferenced) {
+          await supabase
+            .from('conversations')
+            .update({
+              referenced_items: [...existingRefs, {
+                type: context.type,
+                id: context.id,
+                title: context.title,
+                added_at: new Date().toISOString()
+              }]
+            })
+            .eq('conversation_id', conversationId);
+        }
+      } catch (refError) {
+        // Column might not exist yet - that's okay, just log and continue
+        console.log('Could not update referenced_items (column may not exist):', refError);
+      }
+    }
 
     // Update conversation's last message
     const isSenderBuyer = conversation.buyer_id === userId;
@@ -560,6 +702,7 @@ router.post('/conversations/:conversationId/read', authenticateToken, async (req
     const { conversationId } = req.params;
     const userId = req.user!.id;
 
+    // Mark messages as read
     const { error } = await supabase
       .rpc('mark_messages_as_read', {
         p_conversation_id: conversationId,
@@ -567,6 +710,19 @@ router.post('/conversations/:conversationId/read', authenticateToken, async (req
       });
 
     if (error) throw error;
+
+    // =============================================
+    // ALSO MARK RELATED NOTIFICATIONS AS READ
+    // =============================================
+    try {
+      const count = await notificationService.markMessageNotificationsAsRead(userId, conversationId);
+      if (count > 0) {
+        console.log(`Marked ${count} message notification(s) as read for conversation ${conversationId}`);
+      }
+    } catch (notifError) {
+      console.error('Failed to mark notifications as read:', notifError);
+      // Don't fail the request if notification update fails
+    }
 
     res.json({
       success: true,
