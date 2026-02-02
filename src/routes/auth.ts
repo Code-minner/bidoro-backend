@@ -70,16 +70,26 @@ router.post("/register", async (req: Request, res: Response) => {
       });
     }
 
-    // Check if user already exists
+    // Check if user already exists - NOW ALSO CHECK FOR OAUTH
     const { data: existingUser } = await supabase
       .from("users")
-      .select("email")
+      .select("email, oauth_provider")
       .eq("email", email)
       .single();
 
     if (existingUser) {
+      // ✅ NEW: Check if OAuth user
+      if (existingUser.oauth_provider) {
+        return res.status(409).json({
+          success: false,
+          code: "OAUTH_EXISTS",
+          message: `This email is registered with ${existingUser.oauth_provider === 'google' ? 'Google' : 'social login'}. Please use that to sign in.`,
+        });
+      }
+      
       return res.status(409).json({
         success: false,
+        code: "EMAIL_EXISTS",
         message: "User with this email already exists",
       });
     }
@@ -148,14 +158,11 @@ router.post("/register", async (req: Request, res: Response) => {
 
       if (profileError) {
         console.error("Profile creation error:", profileError);
-        // Log the error but don't fail registration
-        // The profile can be created later if needed
       } else {
         console.log(`User profile created for ${email} with username: ${username}`);
       }
     } catch (profileCreationError) {
       console.error("Failed to create user profile:", profileCreationError);
-      // Don't fail the registration if profile creation fails
     }
 
     // Generate JWT tokens
@@ -196,7 +203,6 @@ router.post("/register", async (req: Request, res: Response) => {
         "Failed to send registration verification email:",
         emailError
       );
-      // Don't fail the registration if email fails
     }
 
     res.status(201).json({
@@ -232,7 +238,7 @@ router.post("/login", async (req: Request, res: Response) => {
       });
     }
 
-    // Get user from database with new schema fields
+    // Get user from database - NOW ALSO SELECT oauth_provider
     const { data: user, error } = await supabase
       .from("users")
       .select(
@@ -240,7 +246,8 @@ router.post("/login", async (req: Request, res: Response) => {
         user_id, 
         name, 
         email, 
-        password, 
+        password,
+        oauth_provider,
         phone_number, 
         location_state,
         location_city,
@@ -262,6 +269,23 @@ router.post("/login", async (req: Request, res: Response) => {
       return res.status(401).json({
         success: false,
         message: "Invalid email or password",
+      });
+    }
+
+    // ✅ NEW: Check if user registered with OAuth (no password)
+    if (!user.password && user.oauth_provider) {
+      return res.status(400).json({
+        success: false,
+        code: "OAUTH_USER",
+        message: `This account uses ${user.oauth_provider === 'google' ? 'Google' : 'social'} sign-in. Please click "Continue with Google" to log in.`,
+      });
+    }
+
+    // ✅ NEW: Check if password exists (edge case)
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        message: "Please reset your password or use social login.",
       });
     }
 
@@ -299,15 +323,14 @@ router.post("/login", async (req: Request, res: Response) => {
         });
     } catch (profileError) {
       console.error("Failed to update profile online status:", profileError);
-      // Don't fail login if profile update fails
     }
 
     // Generate tokens
     const accessToken = generateAccessToken(user.user_id, user.email);
     const refreshToken = generateRefreshToken(user.user_id);
 
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = user;
+    // Remove password and oauth_provider from response
+    const { password: _, oauth_provider: __, ...userWithoutPassword } = user;
 
     res.json({
       success: true,
@@ -355,6 +378,7 @@ router.get(
         account_status,
         total_sales,
         total_purchases,
+        email_verified,
         created_at, 
         updated_at
       `
@@ -1033,7 +1057,7 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     // Check if user exists
     const { data: user, error } = await supabase
       .from("users")
-      .select("user_id, name, email")
+      .select("user_id, name, email, oauth_provider, password")
       .eq("email", email)
       .single();
 
@@ -1043,6 +1067,15 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
         success: true,
         message:
           "If an account with this email exists, a reset code has been sent",
+      });
+    }
+
+    // ✅ NEW: Check if OAuth user without password
+    if (!user.password && user.oauth_provider) {
+      return res.status(400).json({
+        success: false,
+        code: "OAUTH_USER",
+        message: `This account uses ${user.oauth_provider === 'google' ? 'Google' : 'social'} sign-in and doesn't have a password. Please use "Continue with Google" to log in.`,
       });
     }
 
@@ -1150,204 +1183,227 @@ router.post("/reset-password", async (req: Request, res: Response) => {
     const { error: updateError } = await supabase
       .from("users")
       .update({
-         password: hashedPassword,
-    updated_at: new Date().toISOString(),
-  })
-  .eq("user_id", resetRecord.user_id);
+        password: hashedPassword,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", resetRecord.user_id);
 
-if (updateError) {
-  return res.status(500).json({
-    success: false,
-    message: "Failed to update password",
-  });
-}
+    if (updateError) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update password",
+      });
+    }
 
-// Mark reset code as used
-await supabase
-  .from("password_resets")
-  .update({ used: true })
-  .eq("id", resetRecord.id);
+    // Mark reset code as used
+    await supabase
+      .from("password_resets")
+      .update({ used: true })
+      .eq("id", resetRecord.id);
 
-// Send confirmation email
-const { data: user } = await supabase
-  .from("users")
-  .select("name")
-  .eq("user_id", resetRecord.user_id)
-  .single();
+    // Send confirmation email
+    const { data: user } = await supabase
+      .from("users")
+      .select("name")
+      .eq("user_id", resetRecord.user_id)
+      .single();
 
-if (user) {
-  await emailService.sendPasswordChangedEmail({
-    name: user.name,
-    email: email,
-  });
-}
+    if (user) {
+      await emailService.sendPasswordChangedEmail({
+        name: user.name,
+        email: email,
+      });
+    }
 
-res.json({
-  success: true,
-  message: "Password has been reset successfully",
+    res.json({
+      success: true,
+      message: "Password has been reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 });
-} catch (error) {
-console.error("Reset password error:", error);
-res.status(500).json({
-success: false,
-message: "Internal server error",
-});
-}
-});
+
 // Resend password reset code
 router.post("/resend-reset-code", async (req: Request, res: Response) => {
-try {
-const { email } = req.body;
-if (!email) {
-  return res.status(400).json({
-    success: false,
-    message: "Email is required",
-  });
-}
+  try {
+    const { email } = req.body;
 
-// Check if user exists
-const { data: user, error } = await supabase
-  .from("users")
-  .select("user_id, name, email")
-  .eq("email", email)
-  .single();
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
 
-if (error || !user) {
-  return res.json({
-    success: true,
-    message:
-      "If an account with this email exists, a new reset code has been sent",
-  });
-}
+    // Check if user exists
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("user_id, name, email, oauth_provider, password")
+      .eq("email", email)
+      .single();
 
-// Generate new 4-digit reset code
-const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
-const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    if (error || !user) {
+      return res.json({
+        success: true,
+        message:
+          "If an account with this email exists, a new reset code has been sent",
+      });
+    }
 
-// Update or insert reset code
-await supabase.from("password_resets").delete().eq("user_id", user.user_id);
+    // ✅ NEW: Check if OAuth user without password
+    if (!user.password && user.oauth_provider) {
+      return res.status(400).json({
+        success: false,
+        code: "OAUTH_USER",
+        message: `This account uses ${user.oauth_provider === 'google' ? 'Google' : 'social'} sign-in. Please use that to log in.`,
+      });
+    }
 
-await supabase.from("password_resets").insert({
-  user_id: user.user_id,
-  email: user.email,
-  code: resetCode,
-  expires_at: expiresAt.toISOString(),
-  created_at: new Date().toISOString(),
+    // Generate new 4-digit reset code
+    const resetCode = Math.floor(1000 + Math.random() * 9000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Update or insert reset code
+    await supabase.from("password_resets").delete().eq("user_id", user.user_id);
+
+    await supabase.from("password_resets").insert({
+      user_id: user.user_id,
+      email: user.email,
+      code: resetCode,
+      expires_at: expiresAt.toISOString(),
+      created_at: new Date().toISOString(),
+    });
+
+    // Send email
+    await emailService.sendPasswordResetEmail({
+      name: user.name,
+      email: user.email,
+      resetCode,
+    });
+
+    res.json({
+      success: true,
+      message:
+        "If an account with this email exists, a new reset code has been sent",
+      ...(process.env.NODE_ENV === "development" && { dev_code: resetCode }),
+    });
+  } catch (error) {
+    console.error("Resend reset code error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 });
 
-// Send email
-await emailService.sendPasswordResetEmail({
-  name: user.name,
-  email: user.email,
-  resetCode,
-});
-
-res.json({
-  success: true,
-  message:
-    "If an account with this email exists, a new reset code has been sent",
-  ...(process.env.NODE_ENV === "development" && { dev_code: resetCode }),
-});
-} catch (error) {
-console.error("Resend reset code error:", error);
-res.status(500).json({
-success: false,
-message: "Internal server error",
-});
-}
-});
 // Change password (authenticated user)
 router.post(
-"/change-password",
-authenticateToken,
-async (req: AuthRequest, res: Response) => {
-try {
-const { old_password, new_password } = req.body;
-const userId = req.user!.id;
-  if (!old_password || !new_password) {
-    return res.status(400).json({
-      success: false,
-      message: "Old password and new password are required",
-    });
+  "/change-password",
+  authenticateToken,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const { old_password, new_password } = req.body;
+      const userId = req.user!.id;
+
+      if (!old_password || !new_password) {
+        return res.status(400).json({
+          success: false,
+          message: "Old password and new password are required",
+        });
+      }
+
+      // Validate new password
+      const passwordValidation = validatePassword(new_password);
+      if (!passwordValidation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: passwordValidation.message,
+        });
+      }
+
+      // Get user with current password
+      const { data: user, error } = await supabase
+        .from("users")
+        .select("user_id, email, name, password, oauth_provider")
+        .eq("user_id", userId)
+        .single();
+
+      if (error || !user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      // ✅ NEW: Check if OAuth user without password
+      if (!user.password && user.oauth_provider) {
+        return res.status(400).json({
+          success: false,
+          code: "OAUTH_USER",
+          message: `This account uses ${user.oauth_provider === 'google' ? 'Google' : 'social'} sign-in. You can set a password using the "Forgot Password" feature if you want to also log in with email/password.`,
+        });
+      }
+
+      // Verify old password
+      const passwordMatch = await comparePassword(old_password, user.password);
+      if (!passwordMatch) {
+        return res.status(401).json({
+          success: false,
+          message: "Current password is incorrect",
+        });
+      }
+
+      // Check if new password is same as old
+      const samePassword = await comparePassword(new_password, user.password);
+      if (samePassword) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be different from current password",
+        });
+      }
+
+      // Hash new password
+      const hashedPassword = await hashPassword(new_password);
+
+      // Update password
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({
+          password: hashedPassword,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+
+      if (updateError) {
+        return res.status(500).json({
+          success: false,
+          message: "Failed to update password",
+        });
+      }
+
+      // Send confirmation email
+      await emailService.sendPasswordChangedEmail({
+        name: user.name,
+        email: user.email,
+      });
+
+      res.json({
+        success: true,
+        message: "Password changed successfully",
+      });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
   }
-
-  // Validate new password
-  const passwordValidation = validatePassword(new_password);
-  if (!passwordValidation.isValid) {
-    return res.status(400).json({
-      success: false,
-      message: passwordValidation.message,
-    });
-  }
-
-  // Get user with current password
-  const { data: user, error } = await supabase
-    .from("users")
-    .select("user_id, email, name, password")
-    .eq("user_id", userId)
-    .single();
-
-  if (error || !user) {
-    return res.status(404).json({
-      success: false,
-      message: "User not found",
-    });
-  }
-
-  // Verify old password
-  const passwordMatch = await comparePassword(old_password, user.password);
-  if (!passwordMatch) {
-    return res.status(401).json({
-      success: false,
-      message: "Current password is incorrect",
-    });
-  }
-
-  // Check if new password is same as old
-  const samePassword = await comparePassword(new_password, user.password);
-  if (samePassword) {
-    return res.status(400).json({
-      success: false,
-      message: "New password must be different from current password",
-    });
-  }
-
-  // Hash new password
-  const hashedPassword = await hashPassword(new_password);
-
-  // Update password
-  const { error: updateError } = await supabase
-    .from("users")
-    .update({
-      password: hashedPassword,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("user_id", userId);
-
-  if (updateError) {
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update password",
-    });
-  }
-
-  // Send confirmation email
-  await emailService.sendPasswordChangedEmail({
-    name: user.name,
-    email: user.email,
-  });
-
-  res.json({
-    success: true,
-    message: "Password changed successfully",
-  });
-} catch (error) {
-  console.error("Change password error:", error);
-  res.status(500).json({
-    success: false,
-    message: "Internal server error",
-  });
-}
-}
 );
+
 export default router;

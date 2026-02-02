@@ -12,7 +12,9 @@ const router = express.Router();
 // Google OAuth callback handler
 router.post("/google", async (req: Request, res: Response) => {
   try {
-    const { access_token, user: oauthUser } = req.body;
+    const { access_token, user: oauthUser, mode = "login" } = req.body;
+
+    console.log("OAuth request received:", { email: oauthUser?.email, mode });
 
     if (!access_token || !oauthUser) {
       return res.status(400).json({
@@ -46,15 +48,23 @@ router.post("/google", async (req: Request, res: Response) => {
         total_sales,
         total_purchases,
         oauth_provider,
-        oauth_id
+        oauth_id,
+        created_at
       `)
       .eq("email", email)
       .single();
 
     let user;
+    let isNewUser = false;
 
     if (existingUser) {
-      // User exists - update OAuth info if not already set
+      // User exists
+      if (mode === "signup") {
+        // User trying to sign up but already exists - that's okay, just log them in
+        console.log(`User ${email} already exists, logging in instead of signing up`);
+      }
+
+      // Update OAuth info if not already set
       if (!existingUser.oauth_provider) {
         await supabase
           .from("users")
@@ -77,7 +87,21 @@ router.post("/google", async (req: Request, res: Response) => {
 
       user = existingUser;
     } else {
-      // Create new user
+      // User doesn't exist
+      if (mode === "login") {
+        // Trying to login but no account exists
+        console.log(`Login attempt for non-existent user: ${email}`);
+        return res.status(404).json({
+          success: false,
+          code: "USER_NOT_FOUND",
+          message: "No account found with this email. Please sign up first.",
+        });
+      }
+
+      // mode === "signup" - Create new user
+      console.log(`Creating new user: ${email}`);
+      isNewUser = true;
+
       const { data: newUser, error: createError } = await supabase
         .from("users")
         .insert({
@@ -108,7 +132,8 @@ router.post("/google", async (req: Request, res: Response) => {
           kyc_status,
           trust_score,
           total_sales,
-          total_purchases
+          total_purchases,
+          created_at
         `)
         .single();
 
@@ -161,11 +186,11 @@ router.post("/google", async (req: Request, res: Response) => {
     const accessToken = generateAccessToken(user.user_id, user.email);
     const refreshToken = generateRefreshToken(user.user_id);
 
-    console.log(`OAuth login successful for ${user.email}`);
+    console.log(`OAuth ${mode} successful for ${user.email}`);
 
     res.json({
       success: true,
-      message: "Google login successful",
+      message: isNewUser ? "Account created successfully" : "Login successful",
       data: {
         user: {
           user_id: user.user_id,
@@ -183,6 +208,7 @@ router.post("/google", async (req: Request, res: Response) => {
           kyc_status: user.kyc_status,
           trust_score: user.trust_score,
           email_verified: true,
+          created_at: user.created_at,
         },
         tokens: {
           access_token: accessToken,
