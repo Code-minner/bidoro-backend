@@ -36,24 +36,7 @@ router.get('/', authenticateToken, requireAdmin, async (req: AuthRequest, res: R
     // Build query
     let query = supabase
       .from('disputes')
-      .select(`
-        *,
-        order:orders(
-          order_id,
-          order_number,
-          total_amount
-        ),
-        buyer:users!disputes_buyer_id_fkey(
-          user_id,
-          name,
-          email
-        ),
-        seller:users!disputes_seller_id_fkey(
-          user_id,
-          name,
-          email
-        )
-      `, { count: 'exact' });
+      .select('*', { count: 'exact' });
 
     // Filter by type/tab
     if (type === 'appeals') {
@@ -99,24 +82,46 @@ router.get('/', authenticateToken, requireAdmin, async (req: AuthRequest, res: R
       throw error;
     }
 
+    // Get unique user IDs
+    const userIds = new Set<string>();
+    disputes?.forEach(d => {
+      if (d.buyer_id) userIds.add(d.buyer_id);
+      if (d.seller_id) userIds.add(d.seller_id);
+    });
+
+    // Fetch user data
+    let usersMap: Record<string, any> = {};
+    if (userIds.size > 0) {
+      const { data: users } = await supabase
+        .from('users')
+        .select('user_id, name, email')
+        .in('user_id', Array.from(userIds));
+      
+      if (users) {
+        usersMap = users.reduce((acc: Record<string, any>, user: any) => {
+          acc[user.user_id] = user;
+          return acc;
+        }, {});
+      }
+    }
+
     // Format response
     const formattedDisputes = disputes?.map(dispute => ({
       id: dispute.id,
       ticketId: dispute.ticket_id || `DSP-${dispute.id.slice(0, 8).toUpperCase()}`,
       orderId: dispute.order_id,
-      orderNumber: dispute.order?.order_number,
       reason: dispute.reason,
       description: dispute.description,
       parties: {
         seller: {
-          id: dispute.seller?.user_id,
-          name: dispute.seller?.name || 'Unknown Seller',
-          email: dispute.seller?.email || '',
+          id: dispute.seller_id,
+          name: usersMap[dispute.seller_id]?.name || 'Unknown Seller',
+          email: usersMap[dispute.seller_id]?.email || '',
         },
         buyer: {
-          id: dispute.buyer?.user_id,
-          name: dispute.buyer?.name || 'Unknown Buyer',
-          email: dispute.buyer?.email || '',
+          id: dispute.buyer_id,
+          name: usersMap[dispute.buyer_id]?.name || 'Unknown Buyer',
+          email: usersMap[dispute.buyer_id]?.email || '',
         },
       },
       lastMessage: dispute.last_message || 'No messages yet',
@@ -244,16 +249,7 @@ router.get('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
 
     const { data: dispute, error } = await supabase
       .from('disputes')
-      .select(`
-        *,
-        order:orders(*),
-        buyer:users!disputes_buyer_id_fkey(*),
-        seller:users!disputes_seller_id_fkey(*),
-        messages:dispute_messages(
-          *,
-          sender:users(user_id, name, email)
-        )
-      `)
+      .select('*')
       .eq('id', id)
       .single();
 
@@ -266,9 +262,32 @@ router.get('/:id', authenticateToken, requireAdmin, async (req: AuthRequest, res
       });
     }
 
+    // Fetch buyer and seller info
+    const { data: users } = await supabase
+      .from('users')
+      .select('user_id, name, email')
+      .in('user_id', [dispute.buyer_id, dispute.seller_id]);
+
+    const usersMap = users?.reduce((acc: Record<string, any>, user: any) => {
+      acc[user.user_id] = user;
+      return acc;
+    }, {}) || {};
+
+    // Get messages separately
+    const { data: messages } = await supabase
+      .from('dispute_messages')
+      .select('*')
+      .eq('dispute_id', id)
+      .order('created_at', { ascending: true });
+
     res.json({
       success: true,
-      data: dispute,
+      data: {
+        ...dispute,
+        buyer: usersMap[dispute.buyer_id] || { user_id: dispute.buyer_id, name: 'Unknown', email: '' },
+        seller: usersMap[dispute.seller_id] || { user_id: dispute.seller_id, name: 'Unknown', email: '' },
+        messages: messages || [],
+      },
     });
   } catch (error: any) {
     console.error('Error fetching dispute:', error);
@@ -342,10 +361,7 @@ router.get('/:id/messages', authenticateToken, requireAdmin, async (req: AuthReq
 
     const { data: messages, error } = await supabase
       .from('dispute_messages')
-      .select(`
-        *,
-        sender:users(user_id, name, email, role)
-      `)
+      .select('*')
       .eq('dispute_id', id)
       .order('created_at', { ascending: true });
 
@@ -401,10 +417,7 @@ router.post('/:id/messages', authenticateToken, requireAdmin, async (req: AuthRe
         is_admin: true,
         created_at: new Date().toISOString(),
       })
-      .select(`
-        *,
-        sender:users(user_id, name, email)
-      `)
+      .select('*')
       .single();
 
     if (error) throw error;
