@@ -127,7 +127,7 @@ app.get('/', (_req, res) => {
 // ====================
 app.use('/api/locations', locationRoutes);
 app.use('/api/auth', authRoutes);
-app.use('/api/auth/oauth', oauthRoutes);
+app.use('/api/oauth', oauthRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/flutterwave', flutterwaveRoutes);
