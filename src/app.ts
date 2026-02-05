@@ -31,7 +31,7 @@ import wishlistRoutes from './routes/wishlist';
 import auctionRoutes from './routes/auctions';
 import sellerFeedbacksRoutes from './routes/sellerFeedbacks';
 import referralRoutes from './routes/referral.routes';
-import cronRoutes from './routes/cron';  // <-- ADD THIS LINE
+import cronRoutes from './routes/cron';
 import deliveryAddressRoutes from './routes/deliveryAddress';
 import cartRoutes from './routes/cart';
 import checkoutRoutes from './routes/checkout';
@@ -44,15 +44,9 @@ import adminSettingsRoutes from './routes/admin-settings';
 import adminDisputesRoutes from './routes/admin-disputes';
 
 
-
-
-
 import walletRoutes from './routes/walletRoutes';
 import adminProductsRoutes from './routes/admin/products';
 import reportsRoutes from './routes/reports';
-
-
-
 
 import notificationRoutes from './routes/notification.routes';
 
@@ -61,11 +55,6 @@ import adminRequestsRoutes from './routes/admin/requests';
 import adminUsersRouter from './routes/admin/admin-users';
 import rolesRouter from './routes/admin/roles';
 import adminOrdersRouter from './routes/admin/orders';
-
-
-
-
-
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -77,7 +66,7 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin: true, // allow all origins (safe behind auth)
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
@@ -93,6 +82,22 @@ app.use(
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ====================
+// ✅ REDIRECT MIDDLEWARE - MUST BE BEFORE ROUTES
+// Catch calls missing /api prefix and redirect them
+// ====================
+app.use((req, res, next) => {
+  // Only redirect paths that start with /admin but not /api/admin
+  if (req.path.startsWith('/admin') && !req.path.startsWith('/api/admin')) {
+    const newPath = `/api${req.path}`;
+    console.log(`[REDIRECT] ${req.method} ${req.path} -> ${newPath}`);
+    
+    // Use 307 to preserve the HTTP method (GET stays GET, POST stays POST)
+    return res.redirect(307, newPath);
+  }
+  next();
+});
 
 // ====================
 // Health check
@@ -125,7 +130,7 @@ app.get('/', (_req, res) => {
 // ====================
 app.use('/api/locations', locationRoutes);
 app.use('/api/auth', authRoutes);
-app.use('/api/auth/oauth', oauthRoutes);
+app.use('/api/oauth', oauthRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/flutterwave', flutterwaveRoutes);
@@ -156,7 +161,7 @@ app.use('/api/feedbacks', sellerFeedbacksRoutes);
 app.use('/api/referral', referralRoutes);
 
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/cron', cronRoutes);  // <-- ADD THIS LINE
+app.use('/api/cron', cronRoutes);
 
 app.use('/api/user/addresses', deliveryAddressRoutes);
 
@@ -207,7 +212,7 @@ app.use(
 );
 
 // ====================
-// 404 handler
+// 404 handler - MUST BE LAST
 // ====================
 app.use((_req, res) => {
   res.status(404).json({
