@@ -37,9 +37,12 @@ import cartRoutes from './routes/cart';
 import checkoutRoutes from './routes/checkout';
 import searchRoutes from "./routes/search";
 import oauthRoutes from './routes/oauth';
+
 import adminDashboardRoutes from './routes/admin-dashboard';
 import adminBudgetBidsRoutes from './routes/admin-budgetBids';
 import adminSettingsRoutes from './routes/admin-settings';
+import adminDisputesRoutes from './routes/admin-disputes';
+
 
 import walletRoutes from './routes/walletRoutes';
 import adminProductsRoutes from './routes/admin/products';
@@ -175,6 +178,8 @@ app.use('/api/admin/budget-bids', adminBudgetBidsRoutes);
 
 app.use('/api/admin/settings', adminSettingsRoutes);
 
+app.use('/api/admin/disputes', adminDisputesRoutes);
+
 app.use('/api/wallet', walletRoutes);
 app.use('/api/admin/reports', reportsRoutes);
 app.use('/api/admin/requests', adminRequestsRoutes);
@@ -182,6 +187,10 @@ app.use('/api/admin/admin-users', adminUsersRouter);
 app.use('/api/admin/roles', rolesRouter);
 app.use('/api/admin/orders', adminOrdersRouter);
 app.use('/api/contact', contactRoutes);
+
+
+
+
 
 
 // ====================
