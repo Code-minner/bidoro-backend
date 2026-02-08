@@ -52,6 +52,8 @@ import adminRequestsRoutes from './routes/admin/requests';
 import adminUsersRouter from './routes/admin/admin-users';
 import rolesRouter from './routes/admin/roles';
 import adminOrdersRouter from './routes/admin/orders';
+import contactRoutes from './routes/contact';
+
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -179,6 +181,8 @@ app.use('/api/admin/requests', adminRequestsRoutes);
 app.use('/api/admin/admin-users', adminUsersRouter);
 app.use('/api/admin/roles', rolesRouter);
 app.use('/api/admin/orders', adminOrdersRouter);
+app.use('/api/contact', contactRoutes);
+
 
 // ====================
 // Global error handler

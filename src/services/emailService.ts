@@ -1169,6 +1169,209 @@ class EmailService {
     </html>
   `;
   }
+
+
+  // Add these methods to your EmailService class in src/services/emailService.ts
+
+// ============================================================
+// CONTACT FORM EMAIL METHODS - Add before closing class brace
+// ============================================================
+
+  /**
+   * Send confirmation email to user who submitted contact form
+   */
+  async sendContactConfirmationEmail(data: {
+    name: string;
+    email: string;
+    messageId: string;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "We've Received Your Message - BIDORO ✅",
+        html: this.getContactConfirmationTemplate(data),
+        text: `Hi ${data.name},\n\nThank you for contacting BIDORO!\n\nWe've received your message and will respond within 24-48 hours.\n\nReference ID: ${data.messageId}\n\nBest regards,\nBIDORO Support Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Contact confirmation email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Contact confirmation email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getContactConfirmationTemplate(data: {
+    name: string;
+    messageId: string;
+  }): string {
+    return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Message Received - BIDORO</title>
+      </head>
+      <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+        <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+          
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #1C341A 0%, #2d4a2a 100%); padding: 30px; text-align: center;">
+            <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
+                 alt="BIDORO" style="width: 150px; margin-bottom: 15px;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Message Received! ✅</h1>
+          </div>
+
+          <!-- Content -->
+          <div style="padding: 30px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <div style="display: inline-block; width: 60px; height: 60px; background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); border-radius: 50%; margin-bottom: 20px;">
+                <span style="display: block; padding-top: 15px; color: white; font-size: 30px; font-weight: bold;">✓</span>
+              </div>
+            </div>
+
+            <p style="font-size: 16px; color: #333;">Hi ${data.name},</p>
+            <p style="font-size: 16px; color: #333;">Thank you for reaching out to BIDORO! We've successfully received your message.</p>
+
+            <!-- Reference Info -->
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0;"><strong>Reference ID:</strong> ${data.messageId}</p>
+              <p style="margin: 10px 0 0 0; font-size: 14px; color: #666;">Please keep this for your records</p>
+            </div>
+
+            <!-- What's Next -->
+            <div style="background: #dcfce7; border-left: 4px solid #16a34a; padding: 15px; margin: 20px 0;">
+              <h3 style="margin: 0 0 10px 0; color: #166534; font-size: 16px;">📋 What happens next?</h3>
+              <ul style="margin: 0; padding-left: 20px; color: #166534;">
+                <li style="margin-bottom: 8px;">Our support team will review your message</li>
+                <li style="margin-bottom: 8px;">We'll respond within 24-48 hours</li>
+                <li>You'll receive our reply at this email address</li>
+              </ul>
+            </div>
+
+            <!-- Business Hours -->
+            <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0;">
+              <p style="margin: 0; color: #92400e; font-size: 14px;">
+                <strong>⏰ Support Hours:</strong><br>
+                Monday - Friday: 8:00 AM - 6:00 PM WAT<br>
+                Saturday: 9:00 AM - 4:00 PM WAT<br>
+                Sunday: Closed
+              </p>
+            </div>
+
+            <!-- Alternative Contact -->
+            <div style="text-align: center; margin: 25px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+              <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Need urgent assistance?</p>
+              <p style="margin: 0; font-size: 14px;">
+                📧 <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a><br>
+                📞 <a href="tel:+2348000000000" style="color: #1C341A; text-decoration: none; font-weight: 600;">+234 800 000 0000</a>
+              </p>
+            </div>
+
+            <p style="font-size: 14px; color: #333; margin-top: 25px;">
+              We appreciate your patience and look forward to assisting you!
+            </p>
+            <p style="font-size: 14px; color: #333;">
+              <strong>— BIDORO Support Team</strong>
+            </p>
+          </div>
+
+          <!-- Footer -->
+          <div style="background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
+            <p style="margin: 0;">© 2025 BIDORO. All rights reserved.</p>
+            <p style="margin: 5px 0 0 0;">
+              This is an automated confirmation. Please do not reply to this email.
+            </p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+  }
+
+  /**
+   * Send notification to admin about new contact message
+   */
+  async sendAdminContactNotification(data: {
+    name: string;
+    email: string;
+    phone: string;
+    subject: string;
+    message: string;
+    messageId: string;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: process.env.ADMIN_EMAIL || "admin@bidoro.africa",
+        subject: `New Contact Message: ${data.subject} 📨`,
+        html: this.getAdminContactNotificationTemplate(data),
+        text: `New Contact Message\n\nFrom: ${data.name} (${data.email})\nPhone: ${data.phone}\nSubject: ${data.subject}\n\nMessage:\n${data.message}\n\nID: ${data.messageId}`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Admin contact notification sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Admin contact notification failed:", error.message);
+      return false;
+    }
+  }
+
+  private getAdminContactNotificationTemplate(data: {
+    name: string;
+    email: string;
+    phone: string;
+    subject: string;
+    message: string;
+    messageId: string;
+  }): string {
+    return `
+    <!DOCTYPE html>
+    <html>
+      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: #1C341A; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="color: white; margin: 0;">New Contact Message 📨</h1>
+        </div>
+        <div style="background: white; padding: 30px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
+          
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <p style="margin: 0 0 10px 0;"><strong>From:</strong> ${data.name}</p>
+            <p style="margin: 0 0 10px 0;"><strong>Email:</strong> <a href="mailto:${data.email}">${data.email}</a></p>
+            <p style="margin: 0 0 10px 0;"><strong>Phone:</strong> ${data.phone}</p>
+            <p style="margin: 0 0 10px 0;"><strong>Subject:</strong> ${data.subject}</p>
+            <p style="margin: 0;"><strong>Message ID:</strong> ${data.messageId}</p>
+          </div>
+
+          <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <h3 style="margin: 0 0 10px 0; color: #856404;">Message:</h3>
+            <p style="margin: 0; color: #856404; white-space: pre-wrap;">${data.message}</p>
+          </div>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="https://bidoro.africa/admin/contact/${data.messageId}" 
+               style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+              View & Respond
+            </a>
+          </div>
+
+          <p style="font-size: 12px; color: #666; margin-top: 30px; text-align: center;">
+            This notification was sent to the BIDORO admin team.
+          </p>
+        </div>
+      </body>
+    </html>
+  `;
+  }
+
 }
 
 export const emailService = new EmailService();
