@@ -1,9 +1,11 @@
 // src/routes/admin-customers.ts
 // Admin routes for customer management
+// ✅ UPDATED: Added email notifications for status changes
 
 import express, { Response } from "express";
 import { AuthRequest, authenticateToken, requireAdmin } from "../middleware/auth";
 import { supabaseAdmin as supabase } from "../config/database";
+import { emailService } from "../services/emailService";
 
 const router = express.Router();
 
@@ -185,11 +187,12 @@ router.get("/customers/:id", async (req: AuthRequest, res: Response) => {
 /**
  * PATCH /api/admin/users/:id/status
  * Update user status (works for both customers and sellers)
+ * ✅ UPDATED: Now sends email notification
  */
 router.patch("/users/:id/status", async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, reason } = req.body;
 
     const validStatuses = ["active", "suspended", "banned"];
     if (!validStatuses.includes(status)) {
@@ -198,6 +201,13 @@ router.patch("/users/:id/status", async (req: AuthRequest, res: Response) => {
         message: "Invalid status. Must be: active, suspended, or banned",
       });
     }
+
+    // ✅ Get user info BEFORE updating (needed for email)
+    const { data: userBefore } = await supabase
+      .from("users")
+      .select("name, email, account_status")
+      .eq("user_id", id)
+      .single();
 
     // Update user status
     const { data, error } = await supabase
@@ -224,6 +234,33 @@ router.patch("/users/:id/status", async (req: AuthRequest, res: Response) => {
 
     // Log the action
     console.log(`Admin updated user ${id} status to ${status}`);
+
+    // ✅ Send email notification based on status change
+    if (userBefore?.email) {
+      const userName = userBefore.name || "User";
+
+      if (status === "suspended" || status === "banned") {
+        // Send suspension email
+        await emailService.sendAccountSuspendedEmail({
+          name: userName,
+          email: userBefore.email,
+          reason: reason || (status === "banned"
+            ? "Your account has been permanently banned for repeated violations of our terms of service"
+            : "Violation of marketplace terms of service"),
+          suspensionDate: new Date().toLocaleDateString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+          }),
+        });
+      } else if (status === "active" && (userBefore.account_status === "suspended" || userBefore.account_status === "banned")) {
+        // Send reactivation email (only if previously suspended/banned)
+        await emailService.sendAccountReactivatedEmail({
+          name: userName,
+          email: userBefore.email,
+        });
+      }
+    }
 
     res.json({
       success: true,

@@ -1,4 +1,4 @@
-// src/services/emailService.ts - Updated with Bidoro Styling
+// src/services/emailService.ts - Updated with Consistent Bidoro Styling
 import nodemailer from "nodemailer";
 
 interface EmailVerificationData {
@@ -7,7 +7,6 @@ interface EmailVerificationData {
   verificationCode: string;
 }
 
-// Add these interfaces at the top
 interface PasswordResetData {
   name: string;
   email: string;
@@ -19,40 +18,83 @@ interface PasswordChangedData {
   email: string;
 }
 
+interface ProductSuspensionData {
+  name: string;
+  email: string;
+  productTitle: string;
+  reason: string;
+  productId: string;
+}
+
+interface ProductReactivationData {
+  name: string;
+  email: string;
+  productTitle: string;
+  productId: string;
+}
+
+interface AccountSuspensionData {
+  name: string;
+  email: string;
+  reason: string;
+  suspensionDate: string;
+}
+
+interface AccountReactivationData {
+  name: string;
+  email: string;
+}
+
+interface ProductRejectionData {
+  name: string;
+  email: string;
+  productTitle: string;
+  reason: string;
+  productId: string;
+}
+
 class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
+    // ← Fix: remove the extra 'c'
+    console.log("🔍 SMTP Config Check:");
+    console.log("User:", process.env.ZEPTOMAIL_USER);
+    console.log("Pass exists:", !!process.env.ZEPTOMAIL_PASS);
+    console.log("🔍 Auth config being passed to nodemailer:");
+    console.log("User:", process.env.ZEPTOMAIL_USER);
+    console.log("Pass:", process.env.ZEPTOMAIL_PASS);
+    console.log(
+      "Pass first 10 chars:",
+      process.env.ZEPTOMAIL_PASS?.substring(0, 10),
+    );
+
+    // Configure SMTP transporter...
     // Configure SMTP transporter with ZeptoMail and proper TLS settings
     this.transporter = nodemailer.createTransport({
       host: process.env.ZEPTOMAIL_HOST,
       port: parseInt(process.env.ZEPTOMAIL_PORT || "465"),
-      secure: true, // Use SSL for port 465
+      secure: true,
       auth: {
         user: process.env.ZEPTOMAIL_USER,
         pass: process.env.ZEPTOMAIL_PASS,
       },
-      // ADD THESE TLS SETTINGS TO FIX SSL ERRORS
       tls: {
-        rejectUnauthorized: process.env.NODE_ENV === "production", // Strict in production, lenient in dev
+        rejectUnauthorized: process.env.NODE_ENV === "production",
         minVersion: "TLSv1.2",
         ciphers:
           "ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS",
       },
-      // ADD CONNECTION TIMEOUTS
-      connectionTimeout: 60000, // 60 seconds
-      greetingTimeout: 30000, // 30 seconds
-      socketTimeout: 60000, // 60 seconds
-      // ADD DEBUG LOGGING IN DEVELOPMENT
+      connectionTimeout: 60000,
+      greetingTimeout: 30000,
+      socketTimeout: 60000,
       debug: process.env.NODE_ENV === "development",
       logger: process.env.NODE_ENV === "development",
     });
 
-    // Verify connection configuration with better error handling
     this.verifyConnection();
   }
 
-  // IMPROVED CONNECTION VERIFICATION
   private async verifyConnection(): Promise<void> {
     try {
       await this.transporter.verify();
@@ -60,7 +102,6 @@ class EmailService {
     } catch (error: any) {
       console.error("❌ Email service configuration error:", error.message);
 
-      // Provide specific guidance based on error type
       if (error.code === "ESOCKET") {
         console.error("🔧 Fix: Check network connection and firewall settings");
       } else if (error.code === "EAUTH") {
@@ -73,13 +114,115 @@ class EmailService {
         );
       }
 
-      // Don't throw error - allow app to continue running
       console.warn(
         "⚠️  Email service will retry connection on first send attempt",
       );
     }
   }
 
+  // ============================================================
+  // SHARED HEADER TEMPLATE - Used across all emails
+  // ============================================================
+  private getEmailHeader(
+    title: string,
+    subtitle: string,
+    heroImageUrl?: string,
+  ): string {
+    return `
+    <div style="background: #E8F4A6; padding: 30px 20px; margin: 0; border-radius: 12px 12px 0 0; overflow: hidden;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 100%;">
+        <tr>
+          <td style="vertical-align: middle; width: 50%;">
+            <!-- Logo -->
+            <div style="margin-bottom: 15px;">
+              <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
+                   alt="BIDORO" 
+                   style="width: 120px; max-width: 100%; height: auto; display: block;">
+            </div>
+            
+            <!-- Title Text -->
+            <h1 style="margin: 0 0 8px 0; font-size: 28px; color: #1C341A; font-weight: 700; line-height: 1.2;">
+              ${title}
+            </h1>
+            <p style="margin: 0; font-size: 14px; color: #1C341A; opacity: 0.8;">
+              ${subtitle}
+            </p>
+          </td>
+          <td style="vertical-align: middle; width: 50%; text-align: right;">
+            <!-- Hero Image -->
+            ${
+              heroImageUrl
+                ? `
+            <img src="${heroImageUrl}" 
+                 alt="Hero" 
+                 style="width: 100%; max-width: 240px; height: auto; display: block; margin-left: auto;">
+            `
+                : ""
+            }
+          </td>
+        </tr>
+      </table>
+    </div>
+    `;
+  }
+
+  // ============================================================
+  // SHARED FOOTER TEMPLATE - Used across all emails
+  // ============================================================
+  private getEmailFooter(): string {
+    return `
+    <!-- Footer Section -->
+    <div style="text-align: center; border-radius: 0 0 12px 12px; background: white;">
+      <div style="background: #1C341A; padding: 25px 30px; text-align: center;">
+        <p style="font-size: 14px; color: white; margin: 0 0 15px 0;">
+          If you have any questions, please visit our <a href="https://bidoro.africa/faq" style="color: #E8F4A6; text-decoration: underline;">FAQ</a> or reach out to <a href="mailto:support@bidoro.africa" style="color: #E8F4A6; text-decoration: underline;">support@bidoro.africa</a>
+        </p>
+      </div>
+
+      <!-- Social Media Icons -->
+      <div style="margin: 20px 0;">
+        <a href="https://www.instagram.com/bidoroplug?igsh=YnlubGE1MXZlejcw" style="display: inline-block; margin: 0 8px; text-decoration: none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#909090" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+          </svg>
+        </a>
+        <a href="https://x.com/Bidoroplug" style="display: inline-block; margin: 0 8px; text-decoration: none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#909090" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+        </a>
+        <a href="https://facebook.com/bidoro" style="display: inline-block; margin: 0 8px; text-decoration: none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#909090" xmlns="http://www.w3.org/2000/svg">
+            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+          </svg>
+        </a>
+        <a href="https://www.tiktok.com/@bidoroplug?_r=1&_t=ZS-92lnuRrCsbt" style="display: inline-block; margin: 0 8px; text-decoration: none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#909090" xmlns="http://www.w3.org/2000/svg">
+            <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/>
+          </svg>
+        </a>
+        <a href="https://www.linkedin.com/company/bidoroplug/" style="display: inline-block; margin: 0 8px; text-decoration: none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#909090" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+          </svg>
+        </a>
+        <a href="https://youtube.com/@bidoro" style="display: inline-block; margin: 0 8px; text-decoration: none;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="#909090" xmlns="http://www.w3.org/2000/svg">
+            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+          </svg>
+        </a>
+      </div>
+
+      <p style="font-size: 12px; color: #909090; margin: 15px 0 20px 0; padding-bottom: 10px;">
+        ©2025 Bidoro. All Rights Reserved
+      </p>
+    </div>
+    `;
+  }
+
+  // ============================================================
+  // EMAIL VERIFICATION
+  // ============================================================
   async sendVerificationEmail(data: EmailVerificationData): Promise<boolean> {
     try {
       const { name, email, verificationCode } = data;
@@ -98,7 +241,6 @@ class EmailService {
       const result = await this.transporter.sendMail(mailOptions);
       console.log("✅ Verification email sent successfully:", result.messageId);
 
-      // Log in development for debugging
       if (process.env.NODE_ENV === "development") {
         console.log(`📧 Verification email sent to: ${email}`);
         console.log(`🔢 Verification code: ${verificationCode}`);
@@ -107,14 +249,6 @@ class EmailService {
       return true;
     } catch (error: any) {
       console.error("❌ Verification email sending failed:", error.message);
-
-      // Log specific error details for troubleshooting
-      if (error.code === "ESOCKET") {
-        console.error("🔧 Network/SSL error - check TLS configuration");
-      } else if (error.responseCode) {
-        console.error(`🔧 SMTP Error ${error.responseCode}: ${error.response}`);
-      }
-
       return false;
     }
   }
@@ -131,53 +265,32 @@ class EmailService {
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Verify Your Email - BIDORO</title>
         </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 2px solid #1C341A; border-radius: 20px; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 0; background-color: #f1f6faff;">
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <!-- Header with Logo -->
-          <div style="text-align: center; padding: 40px 20px; border-radius: 16px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); margin: 0;">
-            <!-- Your Logo -->
-            <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
-                 alt="BIDORO Logo" 
-                 style="width: 200px; height: auto; margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;"
-                 onerror="this.style.display='none'">
-            
-            <h1 style="color: #1C341A; margin: 0; font-size: 36px; font-weight: bold;">
-              Verify Your <span style="color: #DEE563;">Email</span>
-            </h1>
-            <p style="color: #1C341A; margin: 15px 0 0 0; font-size: 18px;">
-              Secure your BIDORO account 
-            </p>
-          </div>
+          ${this.getEmailHeader("Verify Your Email", "Secure your BIDORO account", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
           <!-- Main Content Card -->
-          <div style="background: white; margin: 0; padding: 40px 30px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
+          <div style="background: white; margin: 0; padding: 35px 30px;">
             
-            <!-- Personal Greeting -->
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h2 style="color: #1C341A; margin: 0; font-size: 28px;">
-                Hi${name ? ` ${name}` : ""}! 👋
-              </h2>
-              <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">
-                Almost there! Just one more step to activate your account
-              </p>
-            </div>
+            <!-- Greeting -->
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${name}</strong>,
+            </p>
 
             <!-- Welcome Message -->
-            <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border-left: 4px solid #DEE563;">
-              <p style="font-size: 16px; margin: 0; color: #333; line-height: 1.6;">
-               <strong>Welcome to BIDORO!</strong> To complete your account setup and start your marketplace journey, please verify your email address using the code below.
-              </p>
-            </div>
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Almost there! Just one more step to activate your account and start your marketplace journey.
+            </p>
 
             <!-- Verification Code Section -->
             <div style="text-align: center; margin: 35px 0;">
               <h3 style="color: #1C341A; margin: 0 0 20px 0; font-size: 22px;">
-                 Your Verification Code
+                🔑 Your Verification Code
               </h3>
               
               <!-- Code Display -->
-              <div style=" border: 3px solid #1C341A; padding: 30px; border-radius: 15px; margin: 20px 0; box-shadow: 0 8px 20px rgba(28, 52, 26, 0.2);">
-                <div style="font-size: 48px; font-weight: bold; color: #1C341A; letter-spacing: 12px; font-family: 'Courier New', monospace; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">
+              <div style="border: 3px solid #1C341A; padding: 30px; border-radius: 15px; margin: 20px 0; background: #F6F5FA;">
+                <div style="font-size: 48px; font-weight: bold; color: #1C341A; letter-spacing: 12px; font-family: 'Courier New', monospace;">
                   ${verificationCode}
                 </div>
                 <p style="margin: 15px 0 0 0; color: #1C341A; font-size: 14px; font-weight: 600;">
@@ -188,7 +301,7 @@ class EmailService {
 
             <!-- Instructions -->
             <div style="margin: 35px 0;">
-              <div style="background: #f8f9fa; padding: 20px; border-radius: 12px; border-left: 4px solid #DEE563;">
+              <div style="background: #F6F5FA; padding: 20px; border-radius: 12px;">
                 <h4 style="color: #1C341A; margin: 0 0 15px 0; font-size: 18px;">📋 How to verify:</h4>
                 <ol style="margin: 0; padding-left: 20px; color: #333; line-height: 1.6;">
                   <li style="margin-bottom: 8px;">Return to the verification page on BIDORO</li>
@@ -199,63 +312,37 @@ class EmailService {
             </div>
 
             <!-- Security Warning -->
-            <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 2px solid #ffc107; padding: 20px; border-radius: 12px; margin: 30px 0;">
-              <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
-                <strong style="color: #856404; font-size: 16px;">Important Security Notice</strong>
-              </div>
+            <div style="background: #FFF9E6; border: 2px solid #F5C842; padding: 20px; border-radius: 12px; margin: 30px 0;">
               <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
-                This verification code will expire in <strong>10 minutes</strong> for your security. If you didn't create a BIDORO account, please ignore this email.
+                ⚠️ <strong>Important:</strong> This verification code will expire in <strong>10 minutes</strong> for your security. If you didn't create a BIDORO account, please ignore this email.
               </p>
             </div>
 
             <!-- Call to Action -->
             <div style="text-align: center; margin: 40px 0;">
               <a href="https://bidoro.africa/verify" 
-                 style="display: inline-block; background: linear-gradient(135deg, #1C341A 0%, #DEE563 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 15px rgba(28, 52, 26, 0.3); transition: all 0.3s ease;">
-               Verify My Email
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                Verify My Email
               </a>
             </div>
 
-            <!-- Support Section -->
-            <div style="text-align: center; margin: 35px 0; padding: 20px; background: #f8f9fa; border-radius: 12px;">
-              <p style="margin: 0; color: #666; font-size: 14px;">
-                Need help? We're here for you! 
-              </p>
-              <p style="margin: 5px 0 0 0; color: #1C341A; font-size: 14px;">
-                <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
-              </p>
-            </div>
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              We're excited to have you join the BIDORO community!
+            </p>
 
-            <!-- Personal Touch -->
-            <div style="border-top: 2px solid #DEE563; padding-top: 25px; margin-top: 35px;">
-              <p style="font-size: 16px; color: #333; margin: 0 0 15px 0; line-height: 1.6;">
-                We're excited to have you join the BIDORO community! Get ready to discover amazing products and connect with trusted sellers and buyers.
-              </p>
-              <p style="font-size: 16px; color: #1C341A; margin: 0; font-weight: 600;">
-                — The BIDORO Team 
-              </p>
-            </div>
           </div>
 
-          <!-- Footer -->
-          <div style="text-align: center; padding: 30px 20px; background: #f8f9fa; color: #666;">
-            <p style="margin: 0 0 10px 0; font-size: 14px;">
-              This is an automated security email. Please do not reply to this message.
-            </p>
-            <p style="margin: 0 0 15px 0; font-size: 14px;">
-              Questions? Contact us at <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
-            </p>
-            <p style="margin: 0; font-size: 12px; color: #999;">
-              © 2025 BIDORO. All rights reserved.
-            </p>
-          </div>
+          ${this.getEmailFooter()}
 
         </body>
       </html>
     `;
   }
 
+  // ============================================================
+  // WELCOME EMAIL
+  // ============================================================
   async sendWelcomeEmail(email: string, name: string): Promise<boolean> {
     try {
       const mailOptions = {
@@ -285,433 +372,107 @@ class EmailService {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Welcome to BIDORO</title>
+          <title>Welcome to Bidoro</title>
         </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 2px solid #1C341A; border-radius: 20px; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 0; background-color: #f1f6faff;">
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <!-- Header with Logo -->
-          <div style="text-align: center; padding: 40px 20px; border-radius: 16px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); margin: 0;">
-            <!-- Your Logo -->
-            <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
-                 alt="BIDORO Logo" 
-                 style="width: 200px; height: auto; margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;"
-                 onerror="this.style.display='none'">
-            
-            <h1 style="color: #1C341A; margin: 0; font-size: 36px; font-weight: bold;">
-              Welcome to <span style="color: #DEE563;">BIDORO</span>
-            </h1>
-            <p style="color: #1C341A; margin: 15px 0 0 0; font-size: 18px;">
-              Your marketplace journey begins now! 🎉
-            </p>
-          </div>
+          ${this.getEmailHeader("Welcome to Bidoro", "Your marketplace journey begins now!", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
           <!-- Main Content Card -->
-          <div style="background: white; margin: 0; padding: 40px 30px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
+          <div style="background: white; margin: 0; padding: 35px 30px;">
             
-            <!-- Success Message -->
-            <div style="text-align: center; margin-bottom: 30px;">
-              <div style="display: inline-block; width: 60px; height: 60px; background: linear-gradient(135deg, #1C341A 0%, #DEE563 100%); border-radius: 50%; margin-bottom: 20px; position: relative;">
-                <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 30px; font-weight: bold;">✓</span>
-              </div>
-              <h2 style="color: #1C341A; margin: 0; font-size: 28px;">
-                Hi${name ? ` ${name}` : ""}! 👋
-              </h2>
-              <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">
-                Email verified successfully! Your account is now active
-              </p>
-            </div>
+            <!-- Greeting -->
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${name}</strong>,
+            </p>
 
             <!-- Welcome Message -->
-            <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border-left: 4px solid #DEE563;">
-              <p style="font-size: 16px; margin: 0; color: #333; line-height: 1.6;">
-                <strong>Congratulations!</strong> Your BIDORO account is now fully activated. You're ready to explore Nigeria's premier marketplace and connect with trusted buyers and sellers.
-              </p>
-            </div>
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Congratulations! Your BIDORO account is now fully activated. You can explore Nigeria's premier marketplace and connect with trusted buyers and sellers.
+            </p>
 
             <!-- Features Section -->
-            <div style="margin: 35px 0;">
-              <h3 style="color: #1C341A; margin: 0 0 20px 0; font-size: 22px; text-align: center;">
-               What You Can Do Now
-              </h3>
+            <div style="margin: 30px 0;">
               
-              <div style="display: table; width: 100%; border-spacing: 0;">
-                <!-- Feature 1 -->
-                <div style="display: table-row;">
-                  <div style="display: table-cell; padding: 12px 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; width: 100%;">
-                    <div style="display: flex; align-items: center;">
-                      <span style="font-size: 24px; margin-right: 15px;"></span>
-                      <div>
-                        <strong style="color: #1C341A; font-size: 16px;">Browse & Buy</strong>
-                        <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">Discover thousands of verified products and services</p>
-                      </div>
-                    </div>
-                  </div>
+              <!-- Feature 1: Browse and Buy -->
+              <div style="margin-bottom: 20px; display: table; width: 100%; background-color: #F6F5FA; padding: 10px; border-radius: 10px;">
+                <div style="display: table-cell; vertical-align: top; width: 70px;">
+                  <img src="https://res.cloudinary.com/dijpe53kr/image/upload/v1770649552/Group_39928_eojnaa.png" 
+                       alt="Browse and Buy" 
+                       style="width: 60px; height: 60px; display: block;">
                 </div>
-                
-                <!-- Feature 2 -->
-                <div style="display: table-row;">
-                  <div style="display: table-cell; padding: 12px 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; width: 100%; margin-top: 10px;">
-                    <div style="display: flex; align-items: center;">
-                      <span style="font-size: 24px; margin-right: 15px;"></span>
-                      <div>
-                        <strong style="color: #1C341A; font-size: 16px;">Start Selling</strong>
-                        <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">List your products with our easy-to-use tools</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <!-- Feature 3 -->
-                <div style="display: table-row;">
-                  <div style="display: table-cell; padding: 12px 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px; width: 100%; margin-top: 10px;">
-                    <div style="display: flex; align-items: center;">
-                      <span style="font-size: 24px; margin-right: 15px;"></span>
-                      <div>
-                        <strong style="color: #1C341A; font-size: 16px;">Secure Transactions</strong>
-                        <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">Enjoy protected payments with our escrow system</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <!-- Feature 4 -->
-                <div style="display: table-row;">
-                  <div style="display: table-cell; padding: 12px 15px; background: #f8f9fa; border-radius: 8px; width: 100%; margin-top: 10px;">
-                    <div style="display: flex; align-items: center;">
-                      <span style="font-size: 24px; margin-right: 15px;"></span>
-                      <div>
-                        <strong style="color: #1C341A; font-size: 16px;">Trusted Community</strong>
-                        <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">Connect with verified sellers and buyers</p>
-                      </div>
-                    </div>
-                  </div>
+                <div style="display: table-cell; vertical-align: middle; padding-left: 15px;">
+                  <h3 style="margin: 0 0 5px 0; font-size: 18px; color: #1C341A; font-weight: 600;">Browse and Buy</h3>
+                  <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.4;">Discover thousands of verified products and services</p>
                 </div>
               </div>
+
+              <!-- Feature 2: Start Selling -->
+              <div style="margin-bottom: 20px; display: table; width: 100%; background-color: #F6F5FA; padding: 10px; border-radius: 10px;">
+                <div style="display: table-cell; vertical-align: top; width: 70px;">
+                  <img src="https://res.cloudinary.com/dijpe53kr/image/upload/v1770649623/Group_39928_1_ngxzrh.png" 
+                       alt="Start Selling" 
+                       style="width: 60px; height: 60px; display: block;">
+                </div>
+                <div style="display: table-cell; vertical-align: middle; padding-left: 15px;">
+                  <h3 style="margin: 0 0 5px 0; font-size: 18px; color: #1C341A; font-weight: 600;">Start Selling</h3>
+                  <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.4;">List your products with our easy-to-use tools</p>
+                </div>
+              </div>
+
+              <!-- Feature 3: Secure Transactions -->
+              <div style="margin-bottom: 20px; display: table; width: 100%; background-color: #F6F5FA; padding: 10px; border-radius: 10px;">
+                <div style="display: table-cell; vertical-align: top; width: 70px;">
+                  <img src="https://res.cloudinary.com/dijpe53kr/image/upload/v1770649648/Group_39928_2_tckixv.png" 
+                       alt="Secure Transactions" 
+                       style="width: 60px; height: 60px; display: block;">
+                </div>
+                <div style="display: table-cell; vertical-align: middle; padding-left: 15px;">
+                  <h3 style="margin: 0 0 5px 0; font-size: 18px; color: #1C341A; font-weight: 600;">Secure Transactions</h3>
+                  <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.4;">Enjoy protected payments with our escrow system</p>
+                </div>
+              </div>
+
+              <!-- Feature 4: Trusted Community -->
+              <div style="margin-bottom: 20px; display: table; width: 100%; background-color: #F6F5FA; padding: 10px; border-radius: 10px;">
+                <div style="display: table-cell; vertical-align: top; width: 70px;">
+                  <img src="https://res.cloudinary.com/dijpe53kr/image/upload/v1770649669/Group_39928_3_eyfp0i.png" 
+                       alt="Trusted Community" 
+                       style="width: 60px; height: 60px; display: block;">
+                </div>
+                <div style="display: table-cell; vertical-align: middle; padding-left: 15px;">
+                  <h3 style="margin: 0 0 5px 0; font-size: 18px; color: #1C341A; font-weight: 600;">Trusted Community</h3>
+                  <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.4;">Connect with verified sellers and buyers</p>
+                </div>
+              </div>
+
             </div>
 
-            <!-- Call to Action -->
-            <div style="text-align: center; margin: 40px 0;">
-              <a href="https://bidoro.africa/dashboard" 
-                 style="display: inline-block; background: linear-gradient(135deg, #1C341A 0%, #DEE563 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 15px rgba(28, 52, 26, 0.3); transition: all 0.3s ease;">
-                🚀 Start Exploring
+            <!-- Call to Action Button -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                Start Exploring
               </a>
             </div>
 
-            <!-- Pro Tip -->
-            <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 2px solid #DEE563; padding: 20px; border-radius: 12px; margin: 30px 0;">
-              <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                <span style="font-size: 24px; margin-right: 10px;"></span>
-                <strong style="color: #1C341A; font-size: 16px;">Pro Tip</strong>
-              </div>
-              <p style="margin: 0; color: #1C341A; font-size: 14px; line-height: 1.5;">
-                Complete your profile and verify your identity to build trust with other users and unlock advanced marketplace features.
-              </p>
-            </div>
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Your account is now active and ready to use. You can start exploring Bidoro to make your first purchase
+            </p>
 
-            <!-- Support Info -->
-            <div style="text-align: center; margin: 35px 0; padding: 20px; background: #f8f9fa; border-radius: 12px;">
-              <p style="margin: 0; color: #666; font-size: 14px;">
-                Questions or need help getting started? 
-              </p>
-              <p style="margin: 5px 0 0 0; color: #1C341A; font-size: 14px;">
-                <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
-              </p>
-            </div>
-
-            <!-- Personal Touch -->
-            <div style="border-top: 2px solid #DEE563; padding-top: 25px; margin-top: 35px;">
-              <p style="font-size: 16px; color: #333; margin: 0 0 15px 0; line-height: 1.6;">
-                Welcome to the BIDORO family! We're excited to see what amazing connections and discoveries await you on our platform.
-              </p>
-              <p style="font-size: 16px; color: #1C341A; margin: 0; font-weight: 600;">
-                Happy trading!<br>
-                — The BIDORO Team 
-              </p>
-            </div>
           </div>
 
-          <!-- Footer -->
-          <div style="text-align: center; padding: 30px 20px; background: #f8f9fa; color: #666;">
-            <p style="margin: 0 0 10px 0; font-size: 14px;">
-              You're receiving this email because you created an account on BIDORO.
-            </p>
-            <p style="margin: 0 0 15px 0; font-size: 14px;">
-              Need help? Contact us at <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
-            </p>
-            <p style="margin: 0; font-size: 12px; color: #999;">
-              © 2025 BIDORO. All rights reserved.
-            </p>
-          </div>
+          ${this.getEmailFooter()}
 
         </body>
       </html>
     `;
   }
 
-  // ADD A TEST METHOD FOR DEBUGGING
-  async testEmailService(): Promise<{ success: boolean; message: string }> {
-    try {
-      // Test connection first
-      await this.transporter.verify();
-
-      // Try sending a test email to yourself
-      const testResult = await this.sendVerificationEmail({
-        name: "Test User",
-        email: process.env.SMTP_USER || "test@example.com",
-        verificationCode: "1234",
-      });
-
-      return {
-        success: testResult,
-        message: testResult
-          ? "Email service is working correctly!"
-          : "Email sending failed",
-      };
-    } catch (error: any) {
-      return {
-        success: false,
-        message: `Email service test failed: ${error.message}`,
-      };
-    }
-  }
-
-  //KYC SECTION---------------------------------------------------------
-
-  // KYC submission confirmation email
-  async sendKycSubmissionConfirmation(data: {
-    name: string;
-    email: string;
-    applicationId: string;
-    storeName?: string;
-  }): Promise<boolean> {
-    try {
-      const mailOptions = {
-        from: {
-          name: process.env.EMAIL_FROM_NAME || "BIDORO",
-          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
-        },
-        to: data.email,
-        subject: "KYC Application Submitted - BIDORO",
-        html: this.getKycSubmissionTemplate(data),
-        text: `Hi ${data.name},\n\nYour KYC application has been submitted successfully.\nApplication ID: ${data.applicationId}\n\nWe'll review it within 2-3 business days.\n\nBest regards,\nBIDORO Team`,
-      };
-
-      const result = await this.transporter.sendMail(mailOptions);
-      console.log(
-        "✅ KYC submission email sent successfully:",
-        result.messageId,
-      );
-      return true;
-    } catch (error: any) {
-      console.error("❌ KYC submission email failed:", error.message);
-      return false;
-    }
-  }
-
-  // KYC approval email
-  async sendKycApprovalEmail(data: {
-    name: string;
-    email: string;
-    storeName?: string;
-  }): Promise<boolean> {
-    try {
-      const mailOptions = {
-        from: {
-          name: process.env.EMAIL_FROM_NAME || "BIDORO",
-          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
-        },
-        to: data.email,
-        subject: "KYC Approved - Welcome to BIDORO Sellers! 🎉",
-        html: this.getKycApprovalTemplate(data),
-        text: `Hi ${
-          data.name
-        },\n\nGreat news! Your KYC application has been approved.\n${
-          data.storeName ? `Your store "${data.storeName}" is now active.` : ""
-        }\n\nYou can now start selling on BIDORO.\n\nBest regards,\nBIDORO Team`,
-      };
-
-      const result = await this.transporter.sendMail(mailOptions);
-      console.log("✅ KYC approval email sent successfully:", result.messageId);
-      return true;
-    } catch (error: any) {
-      console.error("❌ KYC approval email failed:", error.message);
-      return false;
-    }
-  }
-
-  // KYC rejection email
-  async sendKycRejectionEmail(data: {
-    name: string;
-    email: string;
-    reason: string;
-    applicationId: string;
-  }): Promise<boolean> {
-    try {
-      const mailOptions = {
-        from: {
-          name: process.env.EMAIL_FROM_NAME || "BIDORO",
-          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
-        },
-        to: data.email,
-        subject: "KYC Application Update Required - BIDORO",
-        html: this.getKycRejectionTemplate(data),
-        text: `Hi ${data.name},\n\nYour KYC application needs updates:\n\n${data.reason}\n\nPlease resubmit with correct information.\n\nBest regards,\nBIDORO Team`,
-      };
-
-      const result = await this.transporter.sendMail(mailOptions);
-      console.log(
-        "✅ KYC rejection email sent successfully:",
-        result.messageId,
-      );
-      return true;
-    } catch (error: any) {
-      console.error("❌ KYC rejection email failed:", error.message);
-      return false;
-    }
-  }
-
-  // Admin notification for new KYC
-  async sendAdminKycNotification(data: {
-    applicationId: string;
-    userEmail: string;
-    storeName?: string;
-  }): Promise<boolean> {
-    try {
-      const mailOptions = {
-        from: {
-          name: process.env.EMAIL_FROM_NAME || "BIDORO",
-          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
-        },
-        to: process.env.ADMIN_EMAIL || "admin@bidoro.africa",
-        subject: `New KYC Application - ${data.storeName || "Review Required"}`,
-        html: this.getAdminKycTemplate(data),
-        text: `New KYC Application\n\nApplication ID: ${
-          data.applicationId
-        }\nUser: ${data.userEmail}\n${
-          data.storeName ? `Store: ${data.storeName}` : ""
-        }\n\nPlease review in admin panel.`,
-      };
-
-      const result = await this.transporter.sendMail(mailOptions);
-      console.log(
-        "✅ Admin KYC notification sent successfully:",
-        result.messageId,
-      );
-      return true;
-    } catch (error: any) {
-      console.error("❌ Admin KYC notification failed:", error.message);
-      return false;
-    }
-  }
-
-  // Email templates (add these as private methods)
-  private getKycSubmissionTemplate(data: {
-    name: string;
-    applicationId: string;
-    storeName?: string;
-  }): string {
-    return `
-    <!DOCTYPE html>
-    <html>
-      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #1C341A;">KYC Application Submitted</h2>
-        <p>Hi ${data.name},</p>
-        <p>Your KYC application has been submitted successfully and is now under review.</p>
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Application ID:</strong> ${data.applicationId}</p>
-          ${
-            data.storeName
-              ? `<p><strong>Store Name:</strong> ${data.storeName}</p>`
-              : ""
-          }
-        </div>
-        <p>We'll review your application within 2-3 business days and notify you of the outcome.</p>
-        <p>Best regards,<br>The BIDORO Team</p>
-      </body>
-    </html>
-  `;
-  }
-
-  private getKycApprovalTemplate(data: {
-    name: string;
-    storeName?: string;
-  }): string {
-    return `
-    <!DOCTYPE html>
-    <html>
-      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #16a34a;">KYC Application Approved!</h2>
-        <p>Hi ${data.name},</p>
-        <p>Congratulations! Your KYC application has been approved.</p>
-        ${
-          data.storeName
-            ? `<p>Your store "<strong>${data.storeName}</strong>" is now active and ready for customers!</p>`
-            : ""
-        }
-        <p>You can now:</p>
-        <ul>
-          <li>List products for sale</li>
-          <li>Manage your store profile</li>
-          <li>Start receiving orders</li>
-        </ul>
-        <p>Welcome to the BIDORO seller community!</p>
-        <p>Best regards,<br>The BIDORO Team</p>
-      </body>
-    </html>
-  `;
-  }
-
-  private getKycRejectionTemplate(data: {
-    name: string;
-    reason: string;
-    applicationId: string;
-  }): string {
-    return `
-    <!DOCTYPE html>
-    <html>
-      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #dc2626;">KYC Application Update Required</h2>
-        <p>Hi ${data.name},</p>
-        <p>Your KYC application requires updates before it can be approved.</p>
-        <div style="background: #fef2f2; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc2626;">
-          <p><strong>Issue:</strong> ${data.reason}</p>
-        </div>
-        <p>Please update your application and resubmit for review.</p>
-        <p>Application ID: ${data.applicationId}</p>
-        <p>Best regards,<br>The BIDORO Team</p>
-      </body>
-    </html>
-  `;
-  }
-
-  private getAdminKycTemplate(data: {
-    applicationId: string;
-    userEmail: string;
-    storeName?: string;
-  }): string {
-    return `
-    <!DOCTYPE html>
-    <html>
-      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #1C341A;">New KYC Application for Review</h2>
-        <p>A new seller has submitted their KYC application:</p>
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Application ID:</strong> ${data.applicationId}</p>
-          <p><strong>User Email:</strong> ${data.userEmail}</p>
-          ${
-            data.storeName
-              ? `<p><strong>Store Name:</strong> ${data.storeName}</p>`
-              : ""
-          }
-        </div>
-        <p>Please review this application in the admin panel.</p>
-      </body>
-    </html>
-  `;
-  }
-
-  // Add these methods to the EmailService class
-
+  // ============================================================
+  // PASSWORD RESET
+  // ============================================================
   async sendPasswordResetEmail(data: PasswordResetData): Promise<boolean> {
     try {
       const { name, email, resetCode } = data;
@@ -747,129 +508,83 @@ class EmailService {
 
   private getPasswordResetTemplate(name: string, resetCode: string): string {
     return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Reset Your Password - BIDORO</title>
-      </head>
-      <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 2px solid #1C341A; border-radius: 20px; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 0; background-color: #f1f6faff;">
-        
-        <!-- Header with Logo -->
-        <div style="text-align: center; padding: 40px 20px; border-radius: 16px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); margin: 0;">
-          <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
-               alt="BIDORO Logo" 
-               style="width: 200px; height: auto; margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;"
-               onerror="this.style.display='none'">
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Reset Your Password - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <h1 style="color: #1C341A; margin: 0; font-size: 36px; font-weight: bold;">
-            Reset Your <span style="color: #DEE563;">Password</span>
-          </h1>
-          <p style="color: #1C341A; margin: 15px 0 0 0; font-size: 18px;">
-            Secure your BIDORO account 🔐
-          </p>
-        </div>
+          ${this.getEmailHeader("Reset Your Password", "Secure your BIDORO account", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
-        <!-- Main Content Card -->
-        <div style="background: white; margin: 0; padding: 40px 30px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
-          
-          <!-- Personal Greeting -->
-          <div style="text-align: center; margin-bottom: 30px;">
-            <h2 style="color: #1C341A; margin: 0; font-size: 28px;">
-              Hi${name ? ` ${name}` : ""}! 👋
-            </h2>
-            <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">
-              We received a request to reset your password
-            </p>
-          </div>
-
-          <!-- Info Message -->
-          <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border-left: 4px solid #DEE563;">
-            <p style="font-size: 16px; margin: 0; color: #333; line-height: 1.6;">
-              Use the code below to reset your password. If you didn't request this, you can safely ignore this email.
-            </p>
-          </div>
-
-          <!-- Reset Code Section -->
-          <div style="text-align: center; margin: 35px 0;">
-            <h3 style="color: #1C341A; margin: 0 0 20px 0; font-size: 22px;">
-              🔑 Your Reset Code
-            </h3>
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
             
-            <!-- Code Display -->
-            <div style="border: 3px solid #1C341A; padding: 30px; border-radius: 15px; margin: 20px 0; box-shadow: 0 8px 20px rgba(28, 52, 26, 0.2);">
-              <div style="font-size: 48px; font-weight: bold; color: #1C341A; letter-spacing: 12px; font-family: 'Courier New', monospace; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">
-                ${resetCode}
+            <!-- Greeting -->
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${name}</strong>,
+            </p>
+
+            <!-- Info Message -->
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              We received a request to reset your password. Use the code below to reset your password. If you didn't request this, you can safely ignore this email.
+            </p>
+
+            <!-- Reset Code Section -->
+            <div style="text-align: center; margin: 35px 0;">
+              <h3 style="color: #1C341A; margin: 0 0 20px 0; font-size: 22px;">
+                🔑 Your Reset Code
+              </h3>
+              
+              <!-- Code Display -->
+              <div style="border: 3px solid #1C341A; padding: 30px; border-radius: 15px; margin: 20px 0; background: #F6F5FA;">
+                <div style="font-size: 48px; font-weight: bold; color: #1C341A; letter-spacing: 12px; font-family: 'Courier New', monospace;">
+                  ${resetCode}
+                </div>
+                <p style="margin: 15px 0 0 0; color: #1C341A; font-size: 14px; font-weight: 600;">
+                  Enter this code to reset your password
+                </p>
               </div>
-              <p style="margin: 15px 0 0 0; color: #1C341A; font-size: 14px; font-weight: 600;">
-                Enter this code to reset your password
+            </div>
+
+            <!-- Instructions -->
+            <div style="margin: 35px 0;">
+              <div style="background: #F6F5FA; padding: 20px; border-radius: 12px;">
+                <h4 style="color: #1C341A; margin: 0 0 15px 0; font-size: 18px;">📋 How to reset:</h4>
+                <ol style="margin: 0; padding-left: 20px; color: #333; line-height: 1.6;">
+                  <li style="margin-bottom: 8px;">Return to the password reset page on BIDORO</li>
+                  <li style="margin-bottom: 8px;">Enter the 4-digit code shown above</li>
+                  <li style="margin-bottom: 8px;">Create your new password</li>
+                </ol>
+              </div>
+            </div>
+
+            <!-- Security Warning -->
+            <div style="background: #FFF9E6; border: 2px solid #F5C842; padding: 20px; border-radius: 12px; margin: 30px 0;">
+              <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                ⚠️ <strong>Important:</strong> This reset code will expire in <strong>10 minutes</strong> for your security. If you didn't request a password reset, please ignore this email and your password will remain unchanged.
               </p>
             </div>
-          </div>
 
-          <!-- Instructions -->
-          <div style="margin: 35px 0;">
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 12px; border-left: 4px solid #DEE563;">
-              <h4 style="color: #1C341A; margin: 0 0 15px 0; font-size: 18px;">📋 How to reset:</h4>
-              <ol style="margin: 0; padding-left: 20px; color: #333; line-height: 1.6;">
-                <li style="margin-bottom: 8px;">Return to the password reset page on BIDORO</li>
-                <li style="margin-bottom: 8px;">Enter the 4-digit code shown above</li>
-                <li style="margin-bottom: 8px;">Create your new password</li>
-              </ol>
-            </div>
-          </div>
-
-          <!-- Security Warning -->
-          <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 2px solid #ffc107; padding: 20px; border-radius: 12px; margin: 30px 0;">
-            <div style="display: flex; align-items: center; margin-bottom: 10px;">
-              <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
-              <strong style="color: #856404; font-size: 16px;">Important Security Notice</strong>
-            </div>
-            <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
-              This reset code will expire in <strong>10 minutes</strong> for your security. If you didn't request a password reset, please ignore this email and your password will remain unchanged.
-            </p>
-          </div>
-
-          <!-- Support Section -->
-          <div style="text-align: center; margin: 35px 0; padding: 20px; background: #f8f9fa; border-radius: 12px;">
-            <p style="margin: 0; color: #666; font-size: 14px;">
-              Need help? We're here for you! 💬
-            </p>
-            <p style="margin: 5px 0 0 0; color: #1C341A; font-size: 14px;">
-              <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
-            </p>
-          </div>
-
-          <!-- Personal Touch -->
-          <div style="border-top: 2px solid #DEE563; padding-top: 25px; margin-top: 35px;">
-            <p style="font-size: 16px; color: #333; margin: 0 0 15px 0; line-height: 1.6;">
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
               Stay safe and secure on BIDORO!
             </p>
-            <p style="font-size: 16px; color: #1C341A; margin: 0; font-weight: 600;">
-              — The BIDORO Team 🛡️
-            </p>
+
           </div>
-        </div>
 
-        <!-- Footer -->
-        <div style="text-align: center; padding: 30px 20px; background: #f8f9fa; color: #666;">
-          <p style="margin: 0 0 10px 0; font-size: 14px;">
-            This is an automated security email. Please do not reply to this message.
-          </p>
-          <p style="margin: 0 0 15px 0; font-size: 14px;">
-            Questions? Contact us at <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a>
-          </p>
-          <p style="margin: 0; font-size: 12px; color: #999;">
-            © 2025 BIDORO. All rights reserved.
-          </p>
-        </div>
+          ${this.getEmailFooter()}
 
-      </body>
-    </html>
-  `;
+        </body>
+      </html>
+    `;
   }
 
+  // ============================================================
+  // PASSWORD CHANGED CONFIRMATION
+  // ============================================================
   async sendPasswordChangedEmail(data: PasswordChangedData): Promise<boolean> {
     try {
       const { name, email } = data;
@@ -899,78 +614,393 @@ class EmailService {
 
   private getPasswordChangedTemplate(name: string): string {
     return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Password Changed - BIDORO</title>
-      </head>
-      <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; border: 2px solid #1C341A; border-radius: 20px; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 0; background-color: #f1f6faff;">
-        
-        <!-- Header -->
-        <div style="text-align: center; padding: 40px 20px; border-radius: 16px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); margin: 0;">
-          <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
-               alt="BIDORO Logo" 
-               style="width: 200px; height: auto; margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;">
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Password Changed - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <h1 style="color: #1C341A; margin: 0; font-size: 36px; font-weight: bold;">
-            Password <span style="color: #DEE563;">Changed</span>
-          </h1>
-        </div>
+          ${this.getEmailHeader("Password Changed", "Your account security has been updated", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
-        <!-- Main Content -->
-        <div style="background: white; margin: 0; padding: 40px 30px;">
-          
-          <div style="text-align: center; margin-bottom: 30px;">
-            <div style="display: inline-block; width: 60px; height: 60px; background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); border-radius: 50%; margin-bottom: 20px;">
-              <span style="display: block; padding-top: 15px; color: white; font-size: 30px;">✓</span>
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <!-- Success Message -->
+            <div style="text-align: center; margin-bottom: 30px;">
+              <div style="display: inline-block; width: 60px; height: 60px; background: #22c55e; border-radius: 50%; margin-bottom: 20px;">
+                <span style="display: block; padding-top: 12px; color: white; font-size: 35px; font-weight: bold;">✓</span>
+              </div>
             </div>
-            <h2 style="color: #1C341A; margin: 0; font-size: 28px;">
-              Hi${name ? ` ${name}` : ""}!
-            </h2>
-            <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">
-              Your password has been changed successfully
-            </p>
-          </div>
 
-          <div style="background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border-left: 4px solid #16a34a;">
-            <p style="font-size: 16px; margin: 0; color: #166534; line-height: 1.6;">
+            <!-- Greeting -->
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
               Your BIDORO account password was updated successfully. You can now log in with your new password.
             </p>
-          </div>
 
-          <!-- Security Warning -->
-          <div style="background: #fef2f2; border: 2px solid #fecaca; padding: 20px; border-radius: 12px; margin: 30px 0;">
-            <div style="display: flex; align-items: center; margin-bottom: 10px;">
-              <span style="font-size: 24px; margin-right: 10px;">🚨</span>
-              <strong style="color: #dc2626; font-size: 16px;">Didn't make this change?</strong>
+            <!-- Security Warning -->
+            <div style="background: #FEE2E2; border: 2px solid #EF4444; padding: 20px; border-radius: 12px; margin: 30px 0;">
+              <p style="margin: 0; color: #991b1b; font-size: 14px; line-height: 1.5;">
+                🚨 <strong>Didn't make this change?</strong><br><br>
+                If you didn't change your password, please contact us immediately at <a href="mailto:hello@bidoro.africa" style="color: #dc2626; font-weight: 600;">hello@bidoro.africa</a> to secure your account.
+              </p>
             </div>
-            <p style="margin: 0; color: #991b1b; font-size: 14px; line-height: 1.5;">
-              If you didn't change your password, please contact us immediately at <a href="mailto:hello@bidoro.africa" style="color: #dc2626; font-weight: 600;">hello@bidoro.africa</a> to secure your account.
+
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Stay safe and secure on BIDORO!
             </p>
+
           </div>
 
-          <div style="border-top: 2px solid #DEE563; padding-top: 25px; margin-top: 35px;">
-            <p style="font-size: 16px; color: #1C341A; margin: 0; font-weight: 600;">
-              — The BIDORO Team 🛡️
-            </p>
-          </div>
-        </div>
+          ${this.getEmailFooter()}
 
-        <!-- Footer -->
-        <div style="text-align: center; padding: 30px 20px; background: #f8f9fa; color: #666;">
-          <p style="margin: 0; font-size: 12px; color: #999;">
-            © 2025 BIDORO. All rights reserved.
-          </p>
-        </div>
-
-      </body>
-    </html>
-  `;
+        </body>
+      </html>
+    `;
   }
 
-  // Order confirmation email to buyer
+  // ============================================================
+  // KYC SUBMISSION CONFIRMATION
+  // ============================================================
+  async sendKycSubmissionConfirmation(data: {
+    name: string;
+    email: string;
+    applicationId: string;
+    storeName?: string;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "KYC Application Submitted - BIDORO",
+        html: this.getKycSubmissionTemplate(data),
+        text: `Hi ${data.name},\n\nYour KYC application has been submitted successfully.\nApplication ID: ${data.applicationId}\n\nWe'll review it within 2-3 business days.\n\nBest regards,\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(
+        "✅ KYC submission email sent successfully:",
+        result.messageId,
+      );
+      return true;
+    } catch (error: any) {
+      console.error("❌ KYC submission email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getKycSubmissionTemplate(data: {
+    name: string;
+    applicationId: string;
+    storeName?: string;
+  }): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>KYC Application Submitted - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("KYC Application Submitted", "We're reviewing your seller application", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Your KYC application has been submitted successfully and is now under review.
+            </p>
+
+            <!-- Application Info -->
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Application ID:</strong> ${data.applicationId}</p>
+              ${data.storeName ? `<p style="margin: 0;"><strong>Store Name:</strong> ${data.storeName}</p>` : ""}
+            </div>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              We'll review your application within 2-3 business days and notify you of the outcome.
+            </p>
+
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Thank you for choosing to sell on BIDORO!
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // KYC APPROVAL
+  // ============================================================
+  async sendKycApprovalEmail(data: {
+    name: string;
+    email: string;
+    storeName?: string;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "KYC Approved - Welcome to BIDORO Sellers! 🎉",
+        html: this.getKycApprovalTemplate(data),
+        text: `Hi ${data.name},\n\nGreat news! Your KYC application has been approved.\n${data.storeName ? `Your store "${data.storeName}" is now active.` : ""}\n\nYou can now start selling on BIDORO.\n\nBest regards,\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ KYC approval email sent successfully:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ KYC approval email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getKycApprovalTemplate(data: {
+    name: string;
+    storeName?: string;
+  }): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>KYC Approved - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("KYC Application Approved!", "Welcome to BIDORO Sellers", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <!-- Success Message -->
+            <div style="text-align: center; margin-bottom: 30px;">
+              <div style="display: inline-block; width: 60px; height: 60px; background: #22c55e; border-radius: 50%; margin-bottom: 20px;">
+                <span style="display: block; padding-top: 12px; color: white; font-size: 35px; font-weight: bold;">✓</span>
+              </div>
+            </div>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Congratulations! Your KYC application has been approved.
+              ${data.storeName ? `Your store "<strong>${data.storeName}</strong>" is now active and ready for customers!` : ""}
+            </p>
+
+            <!-- What's Next -->
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <h3 style="margin: 0 0 15px 0; font-size: 18px; color: #1C341A;">You can now:</h3>
+              <ul style="margin: 0; padding-left: 20px; color: #333; line-height: 1.8;">
+                <li>List products for sale</li>
+                <li>Manage your store profile</li>
+                <li>Start receiving orders</li>
+              </ul>
+            </div>
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/seller/dashboard" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                Go to Seller Dashboard
+              </a>
+            </div>
+
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Welcome to the BIDORO seller community!
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // KYC REJECTION
+  // ============================================================
+  async sendKycRejectionEmail(data: {
+    name: string;
+    email: string;
+    reason: string;
+    applicationId: string;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "KYC Application Update Required - BIDORO",
+        html: this.getKycRejectionTemplate(data),
+        text: `Hi ${data.name},\n\nYour KYC application needs updates:\n\n${data.reason}\n\nPlease resubmit with correct information.\n\nBest regards,\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(
+        "✅ KYC rejection email sent successfully:",
+        result.messageId,
+      );
+      return true;
+    } catch (error: any) {
+      console.error("❌ KYC rejection email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getKycRejectionTemplate(data: {
+    name: string;
+    reason: string;
+    applicationId: string;
+  }): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>KYC Application Update Required - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("KYC Application Update Required", "Please review and resubmit", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Your KYC application requires updates before it can be approved.
+            </p>
+
+            <!-- Issue -->
+            <div style="background: #FEE2E2; border-left: 4px solid #EF4444; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0; font-weight: 600; color: #991b1b;">Issue:</p>
+              <p style="margin: 0; color: #991b1b;">${data.reason}</p>
+            </div>
+
+            <p style="font-size: 16px; color: #333; margin: 25px 0; line-height: 1.6;">
+              Please update your application and resubmit for review.
+            </p>
+
+            <p style="font-size: 14px; color: #666; margin: 0;">
+              <strong>Application ID:</strong> ${data.applicationId}
+            </p>
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/seller/kyc" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                Update Application
+              </a>
+            </div>
+
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              We're here to help if you have any questions
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // ADMIN KYC NOTIFICATION
+  // ============================================================
+  async sendAdminKycNotification(data: {
+    applicationId: string;
+    userEmail: string;
+    storeName?: string;
+  }): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: process.env.ADMIN_EMAIL || "admin@bidoro.africa",
+        subject: `New KYC Application - ${data.storeName || "Review Required"}`,
+        html: this.getAdminKycTemplate(data),
+        text: `New KYC Application\n\nApplication ID: ${data.applicationId}\nUser: ${data.userEmail}\n${data.storeName ? `Store: ${data.storeName}` : ""}\n\nPlease review in admin panel.`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log(
+        "✅ Admin KYC notification sent successfully:",
+        result.messageId,
+      );
+      return true;
+    } catch (error: any) {
+      console.error("❌ Admin KYC notification failed:", error.message);
+      return false;
+    }
+  }
+
+  private getAdminKycTemplate(data: {
+    applicationId: string;
+    userEmail: string;
+    storeName?: string;
+  }): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #1C341A;">New KYC Application for Review</h2>
+          <p>A new seller has submitted their KYC application:</p>
+          <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <p><strong>Application ID:</strong> ${data.applicationId}</p>
+            <p><strong>User Email:</strong> ${data.userEmail}</p>
+            ${data.storeName ? `<p><strong>Store Name:</strong> ${data.storeName}</p>` : ""}
+          </div>
+          <p>Please review this application in the admin panel.</p>
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // ORDER CONFIRMATION (BUYER)
+  // ============================================================
   async sendOrderConfirmationEmail(data: {
     name: string;
     email: string;
@@ -1008,39 +1038,40 @@ class EmailService {
     const itemsList = data.items
       .map(
         (item) => `
-    <tr>
-      <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.product_name}</td>
-      <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
-      <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₦${(item.subtotal || item.total_price || 0).toLocaleString()}</td>
-    </tr>
-  `,
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.product_name}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">₦${(item.subtotal || item.total_price || 0).toLocaleString()}</td>
+      </tr>
+    `,
       )
       .join("");
 
     return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Order Confirmed - BIDORO</title>
-      </head>
-      <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
-        <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Order Confirmed - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <!-- Header -->
-          <div style="background: linear-gradient(135deg, #1C341A 0%, #2d4a2a 100%); padding: 30px; text-align: center;">
-            <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
-                 alt="BIDORO" style="width: 150px; margin-bottom: 15px;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Order Confirmed! 🎉</h1>
-          </div>
+          ${this.getEmailHeader("Order Confirmed!", "Your purchase is being prepared", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
-          <!-- Content -->
-          <div style="padding: 30px;">
-            <p style="font-size: 16px; color: #333;">Hi ${data.name},</p>
-            <p style="font-size: 16px; color: #333;">Great news! Your order has been confirmed and your payment is secured.</p>
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Great news! Your order has been confirmed and your payment is secured.
+            </p>
 
             <!-- Order Info -->
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
               <p style="margin: 0 0 10px 0;"><strong>Order Number:</strong> ${data.orderNumber}</p>
               <p style="margin: 0;"><strong>Total Amount:</strong> ₦${data.totalAmount.toLocaleString()}</p>
             </div>
@@ -1048,10 +1079,10 @@ class EmailService {
             <!-- Items Table -->
             <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
               <thead>
-                <tr style="background: #f8f9fa;">
-                  <th style="padding: 10px; text-align: left;">Item</th>
-                  <th style="padding: 10px; text-align: center;">Qty</th>
-                  <th style="padding: 10px; text-align: right;">Price</th>
+                <tr style="background: #F6F5FA;">
+                  <th style="padding: 10px; text-align: left; border-bottom: 2px solid #1C341A;">Item</th>
+                  <th style="padding: 10px; text-align: center; border-bottom: 2px solid #1C341A;">Qty</th>
+                  <th style="padding: 10px; text-align: right; border-bottom: 2px solid #1C341A;">Price</th>
                 </tr>
               </thead>
               <tbody>
@@ -1060,44 +1091,37 @@ class EmailService {
             </table>
 
             <!-- Escrow Notice -->
-            <div style="background: #dcfce7; border: 1px solid #86efac; padding: 15px; border-radius: 8px; margin: 20px 0;">
-              <p style="margin: 0; color: #166534; font-size: 14px;">
+            <div style="background: #E8F5E9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 8px; margin: 25px 0;">
+              <p style="margin: 0; color: #1B5E20; font-size: 14px;">
                 🔒 <strong>Escrow Protection:</strong> Your payment is held securely until you confirm delivery of your items.
               </p>
             </div>
 
-            <p style="font-size: 14px; color: #666;">
-              The seller will be notified and will prepare your order for delivery/pickup.
-            </p>
-
-            <!-- CTA Button -->
-            <div style="text-align: center; margin: 30px 0;">
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
               <a href="https://bidoro.africa/orders" 
-                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
                 View My Orders
               </a>
             </div>
 
-            <p style="font-size: 14px; color: #333;">
-              Thank you for shopping with BIDORO!<br>
-              <strong>— The BIDORO Team</strong>
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Thank you for shopping with BIDORO!
             </p>
+
           </div>
 
-          <!-- Footer -->
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
-            <p style="margin: 0;">© 2025 BIDORO. All rights reserved.</p>
-            <p style="margin: 5px 0 0 0;">
-              Questions? Contact us at <a href="mailto:hello@bidoro.africa" style="color: #1C341A;">hello@bidoro.africa</a>
-            </p>
-          </div>
-        </div>
-      </body>
-    </html>
-  `;
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
   }
 
-  // New order notification to seller
+  // ============================================================
+  // NEW ORDER NOTIFICATION (SELLER)
+  // ============================================================
   async sendNewOrderNotificationEmail(data: {
     name: string;
     email: string;
@@ -1133,53 +1157,67 @@ class EmailService {
     amount: number;
   }): string {
     return `
-    <!DOCTYPE html>
-    <html>
-      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="background: #1C341A; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
-          <h1 style="color: white; margin: 0;">New Order! 💰</h1>
-        </div>
-        <div style="background: white; padding: 30px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
-          <p>Hi ${data.name},</p>
-          <p>Great news! You have received a new order.</p>
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>New Order Received - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0 0 10px 0;"><strong>Order Number:</strong> ${data.orderNumber}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Buyer:</strong> ${data.buyerName}</p>
-            <p style="margin: 0;"><strong>Your Earnings:</strong> ₦${data.amount.toLocaleString()}</p>
-          </div>
+          ${this.getEmailHeader("New Order! 💰", "You have a new sale", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
-          <div style="background: #fef3c7; border: 1px solid #f59e0b; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0; color: #92400e; font-size: 14px;">
-              ⚠️ Please prepare the item(s) and arrange delivery/pickup with the buyer.
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
             </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Great news! You have received a new order.
+            </p>
+
+            <!-- Order Info -->
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Order Number:</strong> ${data.orderNumber}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Buyer:</strong> ${data.buyerName}</p>
+              <p style="margin: 0;"><strong>Your Earnings:</strong> ₦${data.amount.toLocaleString()}</p>
+            </div>
+
+            <!-- Action Required -->
+            <div style="background: #FFF9E6; border-left: 4px solid #F5C842; padding: 15px; border-radius: 8px; margin: 25px 0;">
+              <p style="margin: 0; color: #856404; font-size: 14px;">
+                ⚠️ Please prepare the item(s) and arrange delivery/pickup with the buyer.
+              </p>
+            </div>
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/seller/orders" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                View Order Details
+              </a>
+            </div>
+
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Thank you for selling on BIDORO!
+            </p>
+
           </div>
 
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="https://bidoro.africa/seller/orders" 
-               style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
-              View Order Details
-            </a>
-          </div>
+          ${this.getEmailFooter()}
 
-          <p>Thank you for selling on BIDORO!</p>
-          <p><strong>— The BIDORO Team</strong></p>
-        </div>
-      </body>
-    </html>
-  `;
+        </body>
+      </html>
+    `;
   }
 
-
-  // Add these methods to your EmailService class in src/services/emailService.ts
-
-// ============================================================
-// CONTACT FORM EMAIL METHODS - Add before closing class brace
-// ============================================================
-
-  /**
-   * Send confirmation email to user who submitted contact form
-   */
+  // ============================================================
+  // CONTACT FORM CONFIRMATION
+  // ============================================================
   async sendContactConfirmationEmail(data: {
     name: string;
     email: string;
@@ -1211,52 +1249,54 @@ class EmailService {
     messageId: string;
   }): string {
     return `
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Message Received - BIDORO</title>
-      </head>
-      <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
-        <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Message Received - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
           
-          <!-- Header -->
-          <div style="background: linear-gradient(135deg, #1C341A 0%, #2d4a2a 100%); padding: 30px; text-align: center;">
-            <img src="https://blogger.googleusercontent.com/img/a/AVvXsEhujOGbWy47k29NCS2fQ5HLpAVigulEi5U_2rdnwVvq0lPEXtcb8L1q__7raTtq-K-RT9XWzaCXpuwV_8ENa-2FXsgPWUUdEE4WHHFCnc86S2cZAvJaAQL3UOUKxDCMc831PtTWtn3tLg2z4pk4PQtiSxAdERuskZvdRpkPgxnylwgJVO8T4t8UXmCUp0o" 
-                 alt="BIDORO" style="width: 150px; margin-bottom: 15px;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Message Received! ✅</h1>
-          </div>
+          ${this.getEmailHeader("Message Received! ✅", "We'll get back to you soon", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
 
-          <!-- Content -->
-          <div style="padding: 30px;">
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <!-- Success Message -->
             <div style="text-align: center; margin-bottom: 30px;">
-              <div style="display: inline-block; width: 60px; height: 60px; background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); border-radius: 50%; margin-bottom: 20px;">
-                <span style="display: block; padding-top: 15px; color: white; font-size: 30px; font-weight: bold;">✓</span>
+              <div style="display: inline-block; width: 60px; height: 60px; background: #22c55e; border-radius: 50%; margin-bottom: 20px;">
+                <span style="display: block; padding-top: 12px; color: white; font-size: 35px; font-weight: bold;">✓</span>
               </div>
             </div>
 
-            <p style="font-size: 16px; color: #333;">Hi ${data.name},</p>
-            <p style="font-size: 16px; color: #333;">Thank you for reaching out to BIDORO! We've successfully received your message.</p>
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Thank you for reaching out to BIDORO! We've successfully received your message.
+            </p>
 
             <!-- Reference Info -->
-            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
               <p style="margin: 0;"><strong>Reference ID:</strong> ${data.messageId}</p>
               <p style="margin: 10px 0 0 0; font-size: 14px; color: #666;">Please keep this for your records</p>
             </div>
 
             <!-- What's Next -->
-            <div style="background: #dcfce7; border-left: 4px solid #16a34a; padding: 15px; margin: 20px 0;">
-              <h3 style="margin: 0 0 10px 0; color: #166534; font-size: 16px;">📋 What happens next?</h3>
-              <ul style="margin: 0; padding-left: 20px; color: #166534;">
-                <li style="margin-bottom: 8px;">Our support team will review your message</li>
-                <li style="margin-bottom: 8px;">We'll respond within 24-48 hours</li>
+            <div style="background: #E8F5E9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 8px; margin: 25px 0;">
+              <h3 style="margin: 0 0 10px 0; color: #1B5E20; font-size: 16px;">📋 What happens next?</h3>
+              <ul style="margin: 0; padding-left: 20px; color: #1B5E20; line-height: 1.8;">
+                <li>Our support team will review your message</li>
+                <li>We'll respond within 24-48 hours</li>
                 <li>You'll receive our reply at this email address</li>
               </ul>
             </div>
 
             <!-- Business Hours -->
-            <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0;">
-              <p style="margin: 0; color: #92400e; font-size: 14px;">
+            <div style="background: #FFF9E6; border-left: 4px solid #F5C842; padding: 15px; border-radius: 8px; margin: 25px 0;">
+              <p style="margin: 0; color: #856404; font-size: 14px;">
                 <strong>⏰ Support Hours:</strong><br>
                 Monday - Friday: 8:00 AM - 6:00 PM WAT<br>
                 Saturday: 9:00 AM - 4:00 PM WAT<br>
@@ -1264,39 +1304,23 @@ class EmailService {
               </p>
             </div>
 
-            <!-- Alternative Contact -->
-            <div style="text-align: center; margin: 25px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-              <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Need urgent assistance?</p>
-              <p style="margin: 0; font-size: 14px;">
-                📧 <a href="mailto:hello@bidoro.africa" style="color: #1C341A; text-decoration: none; font-weight: 600;">hello@bidoro.africa</a><br>
-                📞 <a href="tel:+2348000000000" style="color: #1C341A; text-decoration: none; font-weight: 600;">+234 800 000 0000</a>
-              </p>
-            </div>
-
-            <p style="font-size: 14px; color: #333; margin-top: 25px;">
+            <!-- Account Active Message -->
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
               We appreciate your patience and look forward to assisting you!
             </p>
-            <p style="font-size: 14px; color: #333;">
-              <strong>— BIDORO Support Team</strong>
-            </p>
+
           </div>
 
-          <!-- Footer -->
-          <div style="background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #666;">
-            <p style="margin: 0;">© 2025 BIDORO. All rights reserved.</p>
-            <p style="margin: 5px 0 0 0;">
-              This is an automated confirmation. Please do not reply to this email.
-            </p>
-          </div>
-        </div>
-      </body>
-    </html>
-  `;
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
   }
 
-  /**
-   * Send notification to admin about new contact message
-   */
+  // ============================================================
+  // ADMIN CONTACT NOTIFICATION
+  // ============================================================
   async sendAdminContactNotification(data: {
     name: string;
     email: string;
@@ -1335,43 +1359,494 @@ class EmailService {
     messageId: string;
   }): string {
     return `
-    <!DOCTYPE html>
-    <html>
-      <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="background: #1C341A; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
-          <h1 style="color: white; margin: 0;">New Contact Message 📨</h1>
-        </div>
-        <div style="background: white; padding: 30px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
-          
-          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <p style="margin: 0 0 10px 0;"><strong>From:</strong> ${data.name}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Email:</strong> <a href="mailto:${data.email}">${data.email}</a></p>
-            <p style="margin: 0 0 10px 0;"><strong>Phone:</strong> ${data.phone}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Subject:</strong> ${data.subject}</p>
-            <p style="margin: 0;"><strong>Message ID:</strong> ${data.messageId}</p>
+      <!DOCTYPE html>
+      <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: #1C341A; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+            <h1 style="color: white; margin: 0;">New Contact Message 📨</h1>
           </div>
+          <div style="background: white; padding: 30px; border: 1px solid #ddd; border-top: none; border-radius: 0 0 8px 8px;">
+            
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+              <p style="margin: 0 0 10px 0;"><strong>From:</strong> ${data.name}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Email:</strong> <a href="mailto:${data.email}">${data.email}</a></p>
+              <p style="margin: 0 0 10px 0;"><strong>Phone:</strong> ${data.phone}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Subject:</strong> ${data.subject}</p>
+              <p style="margin: 0;"><strong>Message ID:</strong> ${data.messageId}</p>
+            </div>
 
-          <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <h3 style="margin: 0 0 10px 0; color: #856404;">Message:</h3>
-            <p style="margin: 0; color: #856404; white-space: pre-wrap;">${data.message}</p>
+            <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="margin: 0 0 10px 0; color: #856404;">Message:</h3>
+              <p style="margin: 0; color: #856404; white-space: pre-wrap;">${data.message}</p>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="https://bidoro.africa/admin/contact/${data.messageId}" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                View & Respond
+              </a>
+            </div>
           </div>
-
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="https://bidoro.africa/admin/contact/${data.messageId}" 
-               style="display: inline-block; background: #1C341A; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
-              View & Respond
-            </a>
-          </div>
-
-          <p style="font-size: 12px; color: #666; margin-top: 30px; text-align: center;">
-            This notification was sent to the BIDORO admin team.
-          </p>
-        </div>
-      </body>
-    </html>
-  `;
+        </body>
+      </html>
+    `;
   }
 
+  // ============================================================
+// ADD THESE METHODS inside the EmailService class
+// ============================================================
+
+  // ============================================================
+  // PRODUCT SUSPENDED (Notify Seller)
+  // ============================================================
+  async sendProductSuspendedEmail(data: ProductSuspensionData): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "Product Listing Suspended - BIDORO ⚠️",
+        html: this.getProductSuspendedTemplate(data),
+        text: `Hi ${data.name},\n\nYour product listing "${data.productTitle}" has been suspended.\n\nReason: ${data.reason}\n\nPlease review and update your listing to comply with our guidelines.\n\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Product suspension email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Product suspension email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getProductSuspendedTemplate(data: ProductSuspensionData): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Product Suspended - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("Product Listing Suspended", "Action required on your listing", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              We're writing to let you know that your product listing has been suspended by our moderation team.
+            </p>
+
+            <!-- Product Info -->
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Product:</strong> ${data.productTitle}</p>
+              <p style="margin: 0;"><strong>Product ID:</strong> ${data.productId}</p>
+            </div>
+
+            <!-- Reason -->
+            <div style="background: #FEE2E2; border-left: 4px solid #EF4444; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0; font-weight: 600; color: #991b1b;">Reason for suspension:</p>
+              <p style="margin: 0; color: #991b1b; line-height: 1.6;">${data.reason}</p>
+            </div>
+
+            <!-- What To Do -->
+            <div style="margin: 30px 0;">
+              <div style="background: #F6F5FA; padding: 20px; border-radius: 12px;">
+                <h4 style="color: #1C341A; margin: 0 0 15px 0; font-size: 18px;">📋 What you can do:</h4>
+                <ol style="margin: 0; padding-left: 20px; color: #333; line-height: 1.8;">
+                  <li style="margin-bottom: 8px;">Review the reason for suspension above</li>
+                  <li style="margin-bottom: 8px;">Update your listing to comply with our <a href="https://bidoro.africa/guidelines" style="color: #1C341A; font-weight: 600;">Community Guidelines</a></li>
+                  <li style="margin-bottom: 8px;">Contact support if you believe this was a mistake</li>
+                </ol>
+              </div>
+            </div>
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/seller/products" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                View My Products
+              </a>
+            </div>
+
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              If you have questions, please reach out to our support team.
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // PRODUCT REACTIVATED (Notify Seller)
+  // ============================================================
+  async sendProductReactivatedEmail(data: ProductReactivationData): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "Product Listing Reactivated - BIDORO ✅",
+        html: this.getProductReactivatedTemplate(data),
+        text: `Hi ${data.name},\n\nGreat news! Your product listing "${data.productTitle}" has been reactivated and is now visible to buyers.\n\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Product reactivation email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Product reactivation email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getProductReactivatedTemplate(data: ProductReactivationData): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Product Reactivated - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("Product Reactivated!", "Your listing is live again", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <!-- Success Icon -->
+            <div style="text-align: center; margin-bottom: 30px;">
+              <div style="display: inline-block; width: 60px; height: 60px; background: #22c55e; border-radius: 50%; margin-bottom: 20px;">
+                <span style="display: block; padding-top: 12px; color: white; font-size: 35px; font-weight: bold;">✓</span>
+              </div>
+            </div>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              Great news! Your product listing has been reviewed and reactivated. It is now visible to buyers on BIDORO.
+            </p>
+
+            <!-- Product Info -->
+            <div style="background: #E8F5E9; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0; color: #1B5E20;"><strong>Product:</strong> ${data.productTitle}</p>
+              <p style="margin: 0; color: #1B5E20;"><strong>Status:</strong> Active ✅</p>
+            </div>
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/seller/products" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                View My Products
+              </a>
+            </div>
+
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Thank you for being a trusted seller on BIDORO!
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // PRODUCT REJECTED (Notify Seller - for flagged/reported products)
+  // ============================================================
+  async sendProductRejectedEmail(data: ProductRejectionData): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "Product Listing Removed - BIDORO",
+        html: this.getProductRejectedTemplate(data),
+        text: `Hi ${data.name},\n\nYour product listing "${data.productTitle}" has been removed from BIDORO.\n\nReason: ${data.reason}\n\nIf you believe this was a mistake, please contact support.\n\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Product rejection email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Product rejection email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getProductRejectedTemplate(data: ProductRejectionData): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Product Removed - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("Product Listing Removed", "Your listing has been taken down", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              After review, your product listing has been permanently removed from BIDORO for violating our marketplace guidelines.
+            </p>
+
+            <!-- Product Info -->
+            <div style="background: #F6F5FA; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Product:</strong> ${data.productTitle}</p>
+              <p style="margin: 0;"><strong>Product ID:</strong> ${data.productId}</p>
+            </div>
+
+            <!-- Reason -->
+            <div style="background: #FEE2E2; border-left: 4px solid #EF4444; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <p style="margin: 0 0 10px 0; font-weight: 600; color: #991b1b;">Reason for removal:</p>
+              <p style="margin: 0; color: #991b1b; line-height: 1.6;">${data.reason}</p>
+            </div>
+
+            <!-- Warning -->
+            <div style="background: #FFF9E6; border: 2px solid #F5C842; padding: 20px; border-radius: 12px; margin: 30px 0;">
+              <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                ⚠️ <strong>Please note:</strong> Repeated violations of our guidelines may result in account suspension. Please review our <a href="https://bidoro.africa/guidelines" style="color: #856404; font-weight: 600;">Community Guidelines</a> before listing new products.
+              </p>
+            </div>
+
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              If you believe this was a mistake, contact us at <a href="mailto:support@bidoro.africa" style="color: #1C341A;">support@bidoro.africa</a>
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // ACCOUNT SUSPENDED (Notify User)
+  // ============================================================
+  async sendAccountSuspendedEmail(data: AccountSuspensionData): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "Account Suspended - BIDORO ⚠️",
+        html: this.getAccountSuspendedTemplate(data),
+        text: `Hi ${data.name},\n\nYour BIDORO account has been suspended.\n\nReason: ${data.reason}\n\nEffective: ${data.suspensionDate}\n\nPlease contact support if you believe this was an error.\n\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Account suspension email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Account suspension email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getAccountSuspendedTemplate(data: AccountSuspensionData): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Account Suspended - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("Account Suspended", "Important notice about your account", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              We regret to inform you that your BIDORO account has been suspended due to a violation of our terms of service.
+            </p>
+
+            <!-- Suspension Details -->
+            <div style="background: #FEE2E2; border: 2px solid #EF4444; padding: 25px; border-radius: 12px; margin: 25px 0;">
+              <h3 style="margin: 0 0 15px 0; color: #991b1b; font-size: 18px;">🚫 Suspension Details</h3>
+              <table style="width: 100%;">
+                <tr>
+                  <td style="padding: 8px 0; color: #991b1b; font-weight: 600; vertical-align: top; width: 120px;">Reason:</td>
+                  <td style="padding: 8px 0; color: #991b1b;">${data.reason}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: #991b1b; font-weight: 600; vertical-align: top;">Effective:</td>
+                  <td style="padding: 8px 0; color: #991b1b;">${data.suspensionDate}</td>
+                </tr>
+              </table>
+            </div>
+
+            <!-- What This Means -->
+            <div style="margin: 30px 0;">
+              <div style="background: #F6F5FA; padding: 20px; border-radius: 12px;">
+                <h4 style="color: #1C341A; margin: 0 0 15px 0; font-size: 18px;">What this means:</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #333; line-height: 1.8;">
+                  <li style="margin-bottom: 8px;">You cannot log in to your account</li>
+                  <li style="margin-bottom: 8px;">All your active listings have been hidden</li>
+                  <li style="margin-bottom: 8px;">Pending transactions will be handled by our support team</li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Appeal Info -->
+            <div style="background: #E8F5E9; border-left: 4px solid #4CAF50; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <h4 style="margin: 0 0 10px 0; color: #1B5E20; font-size: 16px;">📩 Think this is a mistake?</h4>
+              <p style="margin: 0; color: #1B5E20; font-size: 14px; line-height: 1.6;">
+                You can appeal this decision by contacting our support team at <a href="mailto:support@bidoro.africa" style="color: #1B5E20; font-weight: 600;">support@bidoro.africa</a>. Please include your account email and any relevant details.
+              </p>
+            </div>
+
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              We take the safety of our community seriously and appreciate your understanding.
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  // ============================================================
+  // ACCOUNT REACTIVATED (Notify User)
+  // ============================================================
+  async sendAccountReactivatedEmail(data: AccountReactivationData): Promise<boolean> {
+    try {
+      const mailOptions = {
+        from: {
+          name: process.env.EMAIL_FROM_NAME || "BIDORO",
+          address: process.env.EMAIL_FROM || "hello@bidoro.africa",
+        },
+        to: data.email,
+        subject: "Account Reactivated - Welcome Back to BIDORO! ✅",
+        html: this.getAccountReactivatedTemplate(data),
+        text: `Hi ${data.name},\n\nGreat news! Your BIDORO account has been reactivated.\n\nYou can now log in and use all features as before.\n\nBIDORO Team`,
+      };
+
+      const result = await this.transporter.sendMail(mailOptions);
+      console.log("✅ Account reactivation email sent:", result.messageId);
+      return true;
+    } catch (error: any) {
+      console.error("❌ Account reactivation email failed:", error.message);
+      return false;
+    }
+  }
+
+  private getAccountReactivatedTemplate(data: AccountReactivationData): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Account Reactivated - BIDORO</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 0; background-color: #f5f5f5;">
+          
+          ${this.getEmailHeader("Welcome Back!", "Your account has been reactivated", "https://res.cloudinary.com/dijpe53kr/image/upload/v1770650425/Group_40011_zyvt7m.png")}
+
+          <!-- Main Content Card -->
+          <div style="background: white; margin: 0; padding: 35px 30px;">
+            
+            <!-- Success Icon -->
+            <div style="text-align: center; margin-bottom: 30px;">
+              <div style="display: inline-block; width: 60px; height: 60px; background: #22c55e; border-radius: 50%; margin-bottom: 20px;">
+                <span style="display: block; padding-top: 12px; color: white; font-size: 35px; font-weight: bold;">✓</span>
+              </div>
+            </div>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 20px 0;">
+              Hello <strong>${data.name}</strong>,
+            </p>
+
+            <p style="font-size: 16px; color: #333; margin: 0 0 25px 0; line-height: 1.6;">
+              We're happy to let you know that your BIDORO account has been reactivated. You now have full access to all features.
+            </p>
+
+            <!-- What's Restored -->
+            <div style="background: #E8F5E9; padding: 20px; border-radius: 10px; margin: 25px 0;">
+              <h3 style="margin: 0 0 15px 0; color: #1B5E20; font-size: 16px;">✅ Your access has been restored:</h3>
+              <ul style="margin: 0; padding-left: 20px; color: #1B5E20; line-height: 1.8;">
+                <li>Log in to your account</li>
+                <li>View and manage your listings</li>
+                <li>Buy and sell on the marketplace</li>
+                <li>Access your order history</li>
+              </ul>
+            </div>
+
+            <!-- Reminder -->
+            <div style="background: #FFF9E6; border: 2px solid #F5C842; padding: 20px; border-radius: 12px; margin: 30px 0;">
+              <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                ⚠️ <strong>Reminder:</strong> Please ensure all future activity complies with our <a href="https://bidoro.africa/terms" style="color: #856404; font-weight: 600;">Terms of Service</a> and <a href="https://bidoro.africa/guidelines" style="color: #856404; font-weight: 600;">Community Guidelines</a> to avoid further account actions.
+              </p>
+            </div>
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 35px 0;">
+              <a href="https://bidoro.africa/login" 
+                 style="display: inline-block; background: #1C341A; color: white; padding: 14px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                Log In Now
+              </a>
+            </div>
+
+            <p style="font-size: 14px; color: #666; margin: 30px 0 0 0; text-align: center; line-height: 1.5;">
+              Welcome back to the BIDORO community!
+            </p>
+
+          </div>
+
+          ${this.getEmailFooter()}
+
+        </body>
+      </html>
+    `;
+  }
+
+  
 }
 
 export const emailService = new EmailService();
