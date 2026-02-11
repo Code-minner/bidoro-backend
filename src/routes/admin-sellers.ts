@@ -1,4 +1,5 @@
 // src/routes/admin-sellers.ts
+// ✅ UPDATED: Added email notifications for suspend/unsuspend
 import express from "express";
 import { Response } from "express";
 import { supabaseAdmin as supabase } from "../config/database";
@@ -7,6 +8,7 @@ import {
   AuthRequest,
   requireAdmin,
 } from "../middleware/auth";
+import { emailService } from "../services/emailService";
 
 const router = express.Router();
 
@@ -21,14 +23,14 @@ const router = express.Router();
 router.get("/", async (req: AuthRequest, res: Response) => {
   try {
     const {
-      page = 1,
-      limit = 20,
+      page = "1",
+      limit = "20",
       search,
       status,
       location,
       sort = "created_at",
       order = "desc",
-    } = req.query;
+    } = req.query as Record<string, string>;
 
     const offset = (Number(page) - 1) * Number(limit);
 
@@ -48,7 +50,7 @@ router.get("/", async (req: AuthRequest, res: Response) => {
         location_city,
         created_at
       `,
-        { count: "exact" }
+        { count: "exact" },
       )
       .eq("role", "seller")
       .eq("kyc_status", "verified")
@@ -66,7 +68,7 @@ router.get("/", async (req: AuthRequest, res: Response) => {
 
     if (search) {
       query = query.or(
-        `name.ilike.%${search}%,email.ilike.%${search}%,phone_number.ilike.%${search}%`
+        `name.ilike.%${search}%,email.ilike.%${search}%,phone_number.ilike.%${search}%`,
       );
     }
 
@@ -98,7 +100,7 @@ router.get("/", async (req: AuthRequest, res: Response) => {
             acc[p.seller_id] = (acc[p.seller_id] || 0) + 1;
             return acc;
           },
-          {}
+          {},
         );
       }
     }
@@ -183,7 +185,7 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
         location_area,
         created_at,
         updated_at
-      `
+      `,
       )
       .eq("user_id", id)
       .single();
@@ -333,8 +335,8 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
             user.account_status === "active"
               ? "Active"
               : user.account_status === "suspended"
-              ? "Suspended"
-              : "Active",
+                ? "Suspended"
+                : "Active",
           kycStatus: user.kyc_status || kycApplication?.status || "not_started",
           location: {
             state: user.location_state || kycApplication?.identity_state || "",
@@ -391,6 +393,7 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
 /**
  * PUT /api/admin/sellers/:id/suspend
  * Suspend a seller
+ * ✅ UPDATED: Now sends email notification
  */
 router.put("/:id/suspend", async (req: AuthRequest, res: Response) => {
   try {
@@ -436,6 +439,20 @@ router.put("/:id/suspend", async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // ✅ Send suspension email to seller
+    if (seller.email) {
+      await emailService.sendAccountSuspendedEmail({
+        name: seller.name || "Seller",
+        email: seller.email,
+        reason: reason || "Violation of marketplace terms of service",
+        suspensionDate: new Date().toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }),
+      });
+    }
+
     res.json({
       success: true,
       message: "Seller suspended successfully",
@@ -457,6 +474,7 @@ router.put("/:id/suspend", async (req: AuthRequest, res: Response) => {
 /**
  * PUT /api/admin/sellers/:id/unsuspend
  * Reactivate a suspended seller
+ * ✅ UPDATED: Now sends email notification
  */
 router.put("/:id/unsuspend", async (req: AuthRequest, res: Response) => {
   try {
@@ -498,6 +516,14 @@ router.put("/:id/unsuspend", async (req: AuthRequest, res: Response) => {
       return res.status(500).json({
         success: false,
         message: "Failed to reactivate seller",
+      });
+    }
+
+    // ✅ Send reactivation email to seller
+    if (seller.email) {
+      await emailService.sendAccountReactivatedEmail({
+        name: seller.name || "Seller",
+        email: seller.email,
       });
     }
 

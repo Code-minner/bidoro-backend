@@ -25,6 +25,7 @@ router.get('/', async (req, res) => {
     if (activeOnly) {
       query = query.eq('is_active', true);
     }
+    query = query.eq('is_service', false);
 
     const { data: categories, error } = await query;
 
@@ -69,6 +70,7 @@ router.get('/parents', async (req, res) => {
       .select('*')
       .is('parent_id', null)
       .eq('is_active', true)
+      .eq('is_service', false)
       .order('sort_order', { ascending: true });
 
     if (limit) {
@@ -108,6 +110,7 @@ router.get('/featured', async (req, res) => {
       .select('*')
       .is('parent_id', null)
       .eq('is_active', true)
+      .eq('is_service', false)
       .order('sort_order', { ascending: true })
       .limit(limit);
 
@@ -152,7 +155,7 @@ router.get('/:slugOrId', async (req, res) => {
 
     const { data: category, error } = await query.single();
 
-    if (error || !category) {
+    if (error || !category || category.is_service) { 
       return res.status(404).json({
         success: false,
         error: 'Category not found',

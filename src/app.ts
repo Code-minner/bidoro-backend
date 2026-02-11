@@ -55,6 +55,8 @@ import adminRequestsRoutes from './routes/admin/requests';
 import adminUsersRouter from './routes/admin/admin-users';
 import rolesRouter from './routes/admin/roles';
 import adminOrdersRouter from './routes/admin/orders';
+import contactRoutes from './routes/contact';
+
 
 import supportRoutes from './routes/support';
 
@@ -187,6 +189,8 @@ app.use('/api/admin/requests', adminRequestsRoutes);
 app.use('/api/admin/admin-users', adminUsersRouter);
 app.use('/api/admin/roles', rolesRouter);
 app.use('/api/admin/orders', adminOrdersRouter);
+app.use('/api/contact', contactRoutes);
+
 
 app.use('/api/support', supportRoutes);
 
