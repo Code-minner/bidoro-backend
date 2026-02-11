@@ -56,6 +56,9 @@ import adminUsersRouter from './routes/admin/admin-users';
 import rolesRouter from './routes/admin/roles';
 import adminOrdersRouter from './routes/admin/orders';
 
+import supportRoutes from './routes/support';
+
+
 const app = express();
 const PORT = process.env.PORT || 3003;
 
@@ -185,7 +188,7 @@ app.use('/api/admin/admin-users', adminUsersRouter);
 app.use('/api/admin/roles', rolesRouter);
 app.use('/api/admin/orders', adminOrdersRouter);
 
-
+app.use('/api/support', supportRoutes);
 
 
 
