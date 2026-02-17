@@ -13,8 +13,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "sourceMap": true,
-    "allowJs": true,
-    "typeRoots": ["./node_modules/@types", "./src/types"]
+    "allowJs": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"],
