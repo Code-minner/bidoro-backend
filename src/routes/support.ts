@@ -92,7 +92,7 @@ async function notifyUser(userId: string, ticketId: string, ticketNumber: string
       message: isImage ? '📷 Support sent an image' : messagePreview.substring(0, 50) + (messagePreview.length > 50 ? '...' : ''),
       category: 'support',
       type: 'info',
-      action_url: `/support`,
+      action_url: `/messages?tab=support`,
       metadata: {
         ticket_id: ticketId,
         ticket_number: ticketNumber,
@@ -551,7 +551,7 @@ router.patch('/ticket/:ticketId/status', authenticateToken, async (req: AuthRequ
           message: `Your support ticket ${ticket.ticket_number} has been ${status}`,
           category: 'support',
           type: 'success',
-          action_url: `/support`,
+          action_url: `/messages?tab=support`,
           metadata: { ticket_id: ticketId, ticket_number: ticket.ticket_number }
         });
       }
