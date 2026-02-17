@@ -560,6 +560,65 @@ router.patch("/:orderId", authenticateToken, async (req: AuthRequest, res: Respo
         break;
       }
 
+      // ---- CONFIRM DELIVERY (buyer confirms receipt → auto-release escrow) ----
+      case "confirmDelivery": {
+        // Only buyer can confirm delivery
+        if (!isBuyer) return res.status(403).json({ success: false, message: "Only the buyer can confirm delivery" });
+
+        // Must be in a shippable/deliverable state
+        if (!["confirmed", "processing", "shipped", "delivered"].includes(order.status)) {
+          return res.status(400).json({ success: false, message: `Cannot confirm delivery for order in "${order.status}" status` });
+        }
+
+        if (order.payment_status !== "paid") {
+          return res.status(400).json({ success: false, message: "Order payment not confirmed" });
+        }
+
+        // Step 1: Mark as delivered
+        const { error: deliverError } = await supabase.from("orders")
+          .update({ status: "delivered", delivered_at: new Date().toISOString(), actual_delivery: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq("order_id", orderId);
+        if (deliverError) throw deliverError;
+
+        await supabase.from("escrow_transactions")
+          .update({ status: "delivered", delivered_at: new Date().toISOString() })
+          .eq("order_id", orderId);
+
+        await supabase.from("order_timeline").insert({
+          event_id: uuidv4(), order_id: orderId, status: "delivered",
+          message: "Buyer confirmed delivery", updated_by: userId, created_at: new Date().toISOString()
+        });
+
+        // Step 2: Release escrow funds to seller
+        const escrowResult = await escrowService.getEscrowByOrderId(orderId);
+
+        if (escrowResult.success && escrowResult.data) {
+          const releaseResult = await escrowService.releaseFundsToSeller(escrowResult.data.id);
+          if (!releaseResult.success) {
+            console.error("Escrow release failed after delivery confirmation:", releaseResult.error);
+            // Don't fail the whole request — delivery is confirmed, release can be retried by cron
+          }
+        } else {
+          // Fallback: no escrow record, just update order
+          await supabase.from("orders")
+            .update({ payment_status: "released", escrow_amount: 0, status: "completed", updated_at: new Date().toISOString() })
+            .eq("order_id", orderId);
+        }
+
+        const { data: finalOrder } = await supabase.from("orders").select("*").eq("order_id", orderId).single();
+
+        await supabase.from("order_timeline").insert({
+          event_id: uuidv4(), order_id: orderId, status: "completed",
+          message: "Escrow funds released to seller", updated_by: userId, created_at: new Date().toISOString()
+        });
+
+        await sendOrderNotification(order.buyer_id, order.order_number, "completed", "buyer", { orderId });
+        await sendOrderNotification(order.seller_id, order.order_number, "escrow_released", "seller", { orderId, amount: order.total_amount });
+
+        result = finalOrder;
+        break;
+      }
+
       // ---- RELEASE ESCROW ----
       case "releaseEscrow": {
         if (!["delivered", "completed"].includes(order.status)) return res.status(400).json({ success: false, message: "Order must be delivered before releasing escrow" });
