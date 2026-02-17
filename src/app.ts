@@ -58,6 +58,9 @@ import adminOrdersRouter from './routes/admin/orders';
 import contactRoutes from './routes/contact';
 
 
+import supportRoutes from './routes/support';
+
+
 const app = express();
 const PORT = process.env.PORT || 3003;
 
@@ -189,7 +192,7 @@ app.use('/api/admin/orders', adminOrdersRouter);
 app.use('/api/contact', contactRoutes);
 
 
-
+app.use('/api/support', supportRoutes);
 
 
 
