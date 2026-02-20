@@ -2,8 +2,7 @@
 // BIDORO BACKEND - MESSAGES API ROUTES
 // File: src/routes/messages.ts
 // WITH NOTIFICATION INTEGRATION
-// UPDATED: Conversations only created on first message
-// FIX: Added get-or-create endpoint + String() wraps for TypeScript
+// UPDATED: Routes sellers to /messager, buyers to /messages
 // ================================================
 
 import { Router } from 'express';
@@ -39,6 +38,7 @@ const upload = multer({
 
 // ================================================
 // HELPER: Send message notification
+// Routes sellers to /messager, buyers to /messages
 // ================================================
 async function sendMessageNotification(
   recipientId: string, 
@@ -47,11 +47,26 @@ async function sendMessageNotification(
   conversationId: string
 ) {
   try {
+    // Get sender name
     const { data: sender } = await supabase
       .from('users')
       .select('name')
       .eq('user_id', senderId)
       .single();
+
+    // Check if recipient is a seller (has seller role or is verified seller)
+    const { data: recipient } = await supabase
+      .from('users')
+      .select('role, kyc_status')
+      .eq('user_id', recipientId)
+      .single();
+
+    const isSeller = recipient?.role === 'seller' || recipient?.kyc_status === 'approved';
+    
+    // Route to appropriate dashboard
+    const actionUrl = isSeller 
+      ? `/messager?conversation=${conversationId}`
+      : `/messages?conversation=${conversationId}`;
 
     const senderName = sender?.name || 'Someone';
     const truncatedMessage = messagePreview.length > 50 
@@ -64,13 +79,15 @@ async function sendMessageNotification(
       message: truncatedMessage,
       category: 'messages',
       type: 'info',
-      action_url: `/messager?conversation=${conversationId}`,
+      action_url: actionUrl,
       metadata: {
         sender_id: senderId,
         sender_name: senderName,
         conversation_id: conversationId
       }
     });
+
+    console.log(`📢 Message notification sent to ${recipientId} -> ${actionUrl}`);
   } catch (error) {
     console.error('Failed to send message notification:', error);
   }
@@ -285,7 +302,7 @@ router.get('/conversations', authenticateToken, async (req: AuthRequest, res: Re
 });
 
 // ================================================
-// GET OR CREATE CONVERSATION (was missing — caused 404)
+// GET OR CREATE CONVERSATION
 // ================================================
 router.post('/conversations/get-or-create', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
