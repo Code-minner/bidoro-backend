@@ -17,7 +17,7 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
     const userId = req.user!.id;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
-    const category = req.query.category as NotificationCategory | undefined;
+    const category = req.query.category as string | undefined as NotificationCategory | undefined;
     const isRead = req.query.is_read === 'true' ? true : req.query.is_read === 'false' ? false : undefined;
 
     const result = await notificationService.getUserNotifications(userId, page, limit, {
@@ -45,7 +45,7 @@ export const getNotifications = async (req: AuthRequest, res: Response): Promise
 export const getGroupedNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const category = req.query.category as NotificationCategory | undefined;
+    const category = req.query.category as string | undefined as NotificationCategory | undefined;
 
     const groups = await notificationService.getGroupedNotifications(userId, category);
     const unreadCount = await notificationService.getUnreadCount(userId);
@@ -73,7 +73,7 @@ export const getGroupedNotifications = async (req: AuthRequest, res: Response): 
 export const getNotificationById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const notification = await notificationService.getNotificationById(userId, id);
 
@@ -127,7 +127,7 @@ export const getUnreadCount = async (req: AuthRequest, res: Response): Promise<v
 export const markAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const notification = await notificationService.markAsRead(userId, id);
 
@@ -152,7 +152,7 @@ export const markAsRead = async (req: AuthRequest, res: Response): Promise<void>
 export const markAsUnread = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const notification = await notificationService.markAsUnread(userId, id);
 
@@ -177,7 +177,7 @@ export const markAsUnread = async (req: AuthRequest, res: Response): Promise<voi
 export const markAllAsRead = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const category = req.query.category as NotificationCategory | undefined;
+    const category = req.query.category as string | undefined as NotificationCategory | undefined;
 
     const count = await notificationService.markAllAsRead(userId, category);
 
@@ -202,7 +202,7 @@ export const markAllAsRead = async (req: AuthRequest, res: Response): Promise<vo
 export const deleteNotification = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     await notificationService.deleteNotification(userId, id);
 

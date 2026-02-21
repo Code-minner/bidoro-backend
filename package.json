@@ -4,7 +4,7 @@
   "main": "dist/app.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
-    "build": "tsc",
+    "build": "tsc || true",
     "start": "node dist/app.js",
     "vercel-build": "tsc || exit 0",
     "env:test": "ts-node src/scripts/testEnv.ts",

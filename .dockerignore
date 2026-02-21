@@ -1,0 +1,11 @@
+node_modules
+dist
+logs
+.env
+.git
+.gitignore
+*.md
+vercel.json
+nodemon.json
+.vscode
+uploads

@@ -57,17 +57,6 @@ class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor() {
-    // ← Fix: remove the extra 'c'
-    console.log("🔍 SMTP Config Check:");
-    console.log("User:", process.env.ZEPTOMAIL_USER);
-    console.log("Pass exists:", !!process.env.ZEPTOMAIL_PASS);
-    console.log("🔍 Auth config being passed to nodemailer:");
-    console.log("User:", process.env.ZEPTOMAIL_USER);
-    console.log("Pass:", process.env.ZEPTOMAIL_PASS);
-    console.log(
-      "Pass first 10 chars:",
-      process.env.ZEPTOMAIL_PASS?.substring(0, 10),
-    );
 
     // Configure SMTP transporter...
     // Configure SMTP transporter with ZeptoMail and proper TLS settings
@@ -80,8 +69,9 @@ class EmailService {
         pass: process.env.ZEPTOMAIL_PASS,
       },
       tls: {
-        rejectUnauthorized: process.env.NODE_ENV === "production",
+        rejectUnauthorized: false, // was: process.env.NODE_ENV === "production"
         minVersion: "TLSv1.2",
+
         ciphers:
           "ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS",
       },
@@ -1393,13 +1383,15 @@ class EmailService {
   }
 
   // ============================================================
-// ADD THESE METHODS inside the EmailService class
-// ============================================================
+  // ADD THESE METHODS inside the EmailService class
+  // ============================================================
 
   // ============================================================
   // PRODUCT SUSPENDED (Notify Seller)
   // ============================================================
-  async sendProductSuspendedEmail(data: ProductSuspensionData): Promise<boolean> {
+  async sendProductSuspendedEmail(
+    data: ProductSuspensionData,
+  ): Promise<boolean> {
     try {
       const mailOptions = {
         from: {
@@ -1493,7 +1485,9 @@ class EmailService {
   // ============================================================
   // PRODUCT REACTIVATED (Notify Seller)
   // ============================================================
-  async sendProductReactivatedEmail(data: ProductReactivationData): Promise<boolean> {
+  async sendProductReactivatedEmail(
+    data: ProductReactivationData,
+  ): Promise<boolean> {
     try {
       const mailOptions = {
         from: {
@@ -1657,7 +1651,9 @@ class EmailService {
   // ============================================================
   // ACCOUNT SUSPENDED (Notify User)
   // ============================================================
-  async sendAccountSuspendedEmail(data: AccountSuspensionData): Promise<boolean> {
+  async sendAccountSuspendedEmail(
+    data: AccountSuspensionData,
+  ): Promise<boolean> {
     try {
       const mailOptions = {
         from: {
@@ -1754,7 +1750,9 @@ class EmailService {
   // ============================================================
   // ACCOUNT REACTIVATED (Notify User)
   // ============================================================
-  async sendAccountReactivatedEmail(data: AccountReactivationData): Promise<boolean> {
+  async sendAccountReactivatedEmail(
+    data: AccountReactivationData,
+  ): Promise<boolean> {
     try {
       const mailOptions = {
         from: {
@@ -1845,8 +1843,6 @@ class EmailService {
       </html>
     `;
   }
-
-  
 }
 
 export const emailService = new EmailService();

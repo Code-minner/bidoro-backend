@@ -231,12 +231,9 @@ app.use((_req, res) => {
 // ====================
 // Local server only
 // ====================
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    console.log(`🚀 Bidoro Backend running on port ${PORT}`);
-    console.log(`📍 Health check: http://localhost:${PORT}/health`);
-  });
-}
+app.listen(PORT, () => {
+  console.log(`🚀 Bidoro Backend running on port ${PORT}`);
+});
 
 // Export for Vercel
 export default app;

@@ -251,7 +251,7 @@ router.get('/ticket/:ticketId/messages', authenticateToken, async (req: AuthRequ
 // ================================================
 router.post('/ticket/:ticketId/messages', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { ticketId } = req.params;
+    const ticketId = req.params.ticketId as string;
     const { content } = req.body;
     const userId = req.user!.id;
 
@@ -338,7 +338,7 @@ router.post('/ticket/:ticketId/messages/image',
   upload.single('image'), 
   async (req: AuthRequest, res: Response) => {
     try {
-      const { ticketId } = req.params;
+      const ticketId = req.params.ticketId as string;
       const { content = '' } = req.body;
       const userId = req.user!.id;
 
@@ -447,7 +447,8 @@ router.post('/ticket/:ticketId/messages/image',
 router.get('/tickets', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { status, priority } = req.query;
+    const status = req.query.status as string | undefined;
+    const priority = req.query.priority as string | undefined;
 
     // Verify admin
     const { data: adminUser } = await supabase

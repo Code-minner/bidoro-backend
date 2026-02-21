@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bidoro-backend
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+    # Uncomment if you need to mount files like google-vision-key.json
+    # volumes:
+    #   - ./google-vision-key.json:/app/google-vision-key.json:ro
+    #   - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

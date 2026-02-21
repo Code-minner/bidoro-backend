@@ -284,7 +284,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
 router.get('/my-auctions', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const sellerId = req.user!.id;
-    const status = req.query.status as string;
+    const status = req.query.status as string | undefined;
 
     let query = supabase
       .from('auctions')
@@ -465,18 +465,16 @@ router.patch('/:auctionId/award', authenticateToken, async (req: AuthRequest, re
  */
 router.get('/', async (req, res) => {
   try {
-    const {
-      category,
-      minPrice,
-      maxPrice,
-      search,
-      status,  // No default - we'll handle undefined below
-      page = '1',
-      limit = '20'
-    } = req.query;
+    const category = req.query.category as string | undefined;
+    const minPrice = req.query.minPrice as string | undefined;
+    const maxPrice = req.query.maxPrice as string | undefined;
+    const search = req.query.search as string | undefined;
+    const status = req.query.status as string | undefined;
+    const page = (req.query.page as string) || '1';
+    const limit = (req.query.limit as string) || '20';
 
-    const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;
 
     let query = supabase
@@ -517,10 +515,10 @@ router.get('/', async (req, res) => {
 
     // Price filter
     if (minPrice) {
-      query = query.gte('starting_price', parseFloat(minPrice as string));
+      query = query.gte('starting_price', parseFloat(minPrice));
     }
     if (maxPrice) {
-      query = query.lte('starting_price', parseFloat(maxPrice as string));
+      query = query.lte('starting_price', parseFloat(maxPrice));
     }
 
     // Search
@@ -682,7 +680,7 @@ router.get('/:auctionId', async (req, res) => {
  */
 router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const { auctionId } = req.params;
+    const auctionId = req.params.auctionId as string;
     const bidderId = req.user!.id;
     const { amount, maxAutoBid } = req.body;
 

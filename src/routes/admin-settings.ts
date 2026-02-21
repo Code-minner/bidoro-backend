@@ -251,7 +251,7 @@ router.put('/general', authenticateToken, requireAdmin, async (req: AuthRequest,
 router.post('/general/logo', authenticateToken, requireAdmin, upload.single('logo'), async (req: AuthRequest, res: Response) => {
   try {
     const file = req.file;
-    const { type } = req.body; // websiteNav, websiteFooter, dashboard, favicon
+    const type = req.body.type as string; // websiteNav, websiteFooter, dashboard, favicon
 
     if (!file) {
       return res.status(400).json({
@@ -408,7 +408,7 @@ router.put('/payment', authenticateToken, requireAdmin, async (req: AuthRequest,
 // Update specific payment provider
 router.put('/payment/:provider', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const { provider } = req.params;
+    const provider = req.params.provider as string;
     const providerSettings = req.body;
 
     const validProviders = ['flutterwave', 'paystack'];
@@ -472,7 +472,7 @@ router.put('/payment/:provider', authenticateToken, requireAdmin, async (req: Au
 // Set active payment provider
 router.put('/payment/active/:provider', authenticateToken, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const { provider } = req.params;
+    const provider = req.params.provider as string;
 
     const validProviders = ['flutterwave', 'paystack'];
     if (!validProviders.includes(provider)) {
