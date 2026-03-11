@@ -1,5 +1,4 @@
 // src/routes/admin-kyc.ts
-// UPDATED: Added Paystack recipient creation on KYC approval
 
 import express from "express";
 import { Request, Response } from "express";
@@ -10,7 +9,6 @@ import {
   requireAdmin,
 } from "../middleware/auth";
 import { emailService } from "../services/emailService";
-import { paystackService } from "../services/paystackService"; // ← ADD THIS
 
 const router = express.Router();
 
@@ -44,7 +42,6 @@ router.get("/applications", async (req: AuthRequest, res: Response) => {
 
     const offset = (Number(page) - 1) * Number(limit);
 
-    // Build query - FIXED: Use explicit foreign key relationship
     let query = supabase
       .from("kyc_applications")
       .select(
@@ -64,7 +61,6 @@ router.get("/applications", async (req: AuthRequest, res: Response) => {
       .order("submitted_at", { ascending: false })
       .range(offset, offset + Number(limit) - 1);
 
-    // Add filters
     if (status && status !== "all") {
       query = query.eq("status", status);
     }
@@ -83,7 +79,6 @@ router.get("/applications", async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Get summary stats
     const { data: stats } = await supabase
       .from("kyc_applications")
       .select("status")
@@ -127,7 +122,6 @@ router.get(
     try {
       const { applicationId } = req.params;
 
-      // Get application with user details - FIXED: Use explicit foreign key
       const { data: application, error } = await supabase
         .from("kyc_applications")
         .select(
@@ -155,13 +149,11 @@ router.get(
         });
       }
 
-      // Get documents
       const { data: documents } = await supabase
         .from("kyc_documents")
         .select("*")
         .eq("application_id", applicationId);
 
-      // Get status history - FIXED: Use explicit foreign key
       const { data: history } = await supabase
         .from("kyc_status_history")
         .select(
@@ -200,7 +192,6 @@ router.put(
       const { status, notes, reason } = req.body;
       const adminId = req.user!.id;
 
-      // Check if adminId is a valid UUID (not mock admin)
       const isValidUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
           adminId,
@@ -220,7 +211,6 @@ router.put(
         });
       }
 
-      // Get current application - FIXED: Use explicit foreign key
       const { data: currentApp, error: fetchError } = await supabase
         .from("kyc_applications")
         .select(
@@ -241,7 +231,6 @@ router.put(
 
       const oldStatus = currentApp.status;
 
-      // If approving, create seller profile and bank account
       if (status === "approved") {
         console.log(`\n=== APPROVING KYC APPLICATION ${applicationId} ===`);
 
@@ -255,7 +244,6 @@ router.put(
         let profileId;
 
         if (existingProfile) {
-          // Update existing profile
           const { data: updatedProfile, error: profileError } = await supabase
             .from("seller_profiles")
             .update({
@@ -282,7 +270,6 @@ router.put(
           profileId = updatedProfile.profile_id;
           console.log(`✅ Updated existing seller profile: ${profileId}`);
         } else {
-          // Create new profile
           const { data: newProfile, error: profileError } = await supabase
             .from("seller_profiles")
             .insert({
@@ -311,41 +298,7 @@ router.put(
           console.log(`✅ Created new seller profile: ${profileId}`);
         }
 
-        // =====================================================
-        // 2. CREATE PAYSTACK TRANSFER RECIPIENT FOR PAYOUTS
-        // =====================================================
-        console.log(`\n--- Creating Paystack Transfer Recipient ---`);
-
-        let paystackRecipientCode: string | null = null;
-
-        try {
-          const recipientResult = await paystackService.createTransferRecipient(
-            {
-              name: currentApp.account_name,
-              accountNumber: currentApp.account_number,
-              bankCode: currentApp.bank_code,
-            },
-          );
-
-          if (recipientResult.success) {
-            paystackRecipientCode = recipientResult.data.recipient_code;
-            console.log(
-              `✅ Paystack recipient created: ${paystackRecipientCode}`,
-            );
-          } else {
-            console.error(
-              "❌ Failed to create Paystack recipient:",
-              recipientResult.error,
-            );
-            // Don't fail the whole approval, just log it
-            // Can be retried later or done manually
-          }
-        } catch (paystackError) {
-          console.error("❌ Paystack API error:", paystackError);
-          // Continue with approval, recipient can be created later
-        }
-
-        // 3. Create/Update seller bank account WITH Paystack recipient code
+        // 2. Create/Update seller bank account
         const { data: existingBank } = await supabase
           .from("seller_bank_accounts")
           .select("account_id")
@@ -354,7 +307,6 @@ router.put(
           .single();
 
         if (existingBank) {
-          // Update existing
           await supabase
             .from("seller_bank_accounts")
             .update({
@@ -364,14 +316,12 @@ router.put(
               account_name: currentApp.account_name,
               is_primary: true,
               status: "active",
-              paystack_recipient_code: paystackRecipientCode, // ← ADD THIS
               updated_at: new Date().toISOString(),
             })
             .eq("account_id", existingBank.account_id);
 
-          console.log(`✅ Updated existing bank account with recipient code`);
+          console.log(`✅ Updated existing bank account`);
         } else {
-          // Create new
           const { error: bankError } = await supabase
             .from("seller_bank_accounts")
             .insert({
@@ -383,7 +333,6 @@ router.put(
               account_name: currentApp.account_name,
               is_primary: true,
               status: "active",
-              paystack_recipient_code: paystackRecipientCode, // ← ADD THIS
             });
 
           if (bankError) {
@@ -391,7 +340,7 @@ router.put(
             throw new Error("Failed to create bank account");
           }
 
-          console.log(`✅ Created new bank account with recipient code`);
+          console.log(`✅ Created new bank account`);
         }
 
         console.log(`=== APPROVAL SETUP COMPLETED ===\n`);
@@ -429,7 +378,6 @@ router.put(
         });
       }
 
-      // FIXED: Update user status with location mapping and without kyc_verified_at
       const userUpdateData: any = {
         kyc_status: status === "approved" ? "verified" : status,
         updated_at: new Date().toISOString(),
@@ -439,17 +387,12 @@ router.put(
         userUpdateData.role = "seller";
         userUpdateData.account_status = "active";
 
-        // FIXED: Map location from KYC application to user
-        // identity_state -> location_state
-        // identity_lga -> location_city (LGA = Local Government Area)
         if (currentApp.identity_state) {
           userUpdateData.location_state = currentApp.identity_state;
         }
         if (currentApp.identity_lga) {
           userUpdateData.location_city = currentApp.identity_lga;
         }
-
-        // Note: kyc_verified_at column doesn't exist in users table - removed
       }
 
       const { error: userUpdateError } = await supabase
@@ -457,17 +400,14 @@ router.put(
         .update(userUpdateData)
         .eq("user_id", currentApp.user_id);
 
-      // FIXED: Add error logging for user update
       if (userUpdateError) {
         console.error("User update error:", userUpdateError);
-        // Don't fail the whole request, but log it
       } else {
         console.log(
           `✅ User updated: role=${userUpdateData.role}, location_state=${userUpdateData.location_state || "N/A"}, location_city=${userUpdateData.location_city || "N/A"}`,
         );
       }
 
-      // Log status change
       await supabase.from("kyc_status_history").insert({
         application_id: applicationId,
         from_status: oldStatus,
@@ -476,7 +416,6 @@ router.put(
         reason: notes || reason || `Status changed to ${status} by admin`,
       });
 
-      // Send notification email to user
       try {
         const user = currentApp.users;
         if (user && status === "approved") {
@@ -525,7 +464,6 @@ router.post(
       const { applicationIds, action, reason, notes } = req.body;
       const adminId = req.user!.id;
 
-      // Check if adminId is a valid UUID (not mock admin)
       const isValidUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
           adminId,
@@ -560,10 +498,8 @@ router.post(
 
       const results = [];
 
-      // Process each application
       for (const appId of applicationIds) {
         try {
-          // Get application - FIXED
           const { data: app } = await supabase
             .from("kyc_applications")
             .select(
@@ -584,37 +520,6 @@ router.post(
             continue;
           }
 
-          // =====================================================
-          // FOR BULK APPROVE: Create Paystack recipient
-          // =====================================================
-          let paystackRecipientCode: string | null = null;
-
-          if (
-            status === "approved" &&
-            app.account_number &&
-            app.bank_code &&
-            app.account_name
-          ) {
-            try {
-              const recipientResult =
-                await paystackService.createTransferRecipient({
-                  name: app.account_name,
-                  accountNumber: app.account_number,
-                  bankCode: app.bank_code,
-                });
-
-              if (recipientResult.success) {
-                paystackRecipientCode = recipientResult.data.recipient_code;
-                console.log(
-                  `✅ Paystack recipient for ${appId}: ${paystackRecipientCode}`,
-                );
-              }
-            } catch (paystackError) {
-              console.error(`❌ Paystack error for ${appId}:`, paystackError);
-            }
-          }
-
-          // Update application
           const updateData: any = {
             status,
             reviewed_by: reviewedBy,
@@ -636,7 +541,6 @@ router.post(
             .update(updateData)
             .eq("application_id", appId);
 
-          // FIXED: Update user with location mapping
           const userUpdate: any = {
             kyc_status: status === "approved" ? "verified" : status,
             updated_at: new Date().toISOString(),
@@ -646,7 +550,6 @@ router.post(
             userUpdate.role = "seller";
             userUpdate.account_status = "active";
 
-            // Map location from KYC application to user
             if (app.identity_state) {
               userUpdate.location_state = app.identity_state;
             }
@@ -664,21 +567,6 @@ router.post(
             console.error(`User update error for ${appId}:`, userUpdateError);
           }
 
-          // =====================================================
-          // FOR BULK APPROVE: Update bank account with recipient code
-          // =====================================================
-          if (status === "approved" && paystackRecipientCode) {
-            await supabase
-              .from("seller_bank_accounts")
-              .update({
-                paystack_recipient_code: paystackRecipientCode,
-                updated_at: new Date().toISOString(),
-              })
-              .eq("user_id", app.user_id)
-              .eq("account_number", app.account_number);
-          }
-
-          // Log status change
           await supabase.from("kyc_status_history").insert({
             application_id: appId,
             from_status: app.status,
@@ -727,14 +615,12 @@ router.post(
       const { documentId, status, feedback } = req.body;
       const adminId = req.user!.id;
 
-      // Check if adminId is a valid UUID (not mock admin)
       const isValidUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
           adminId,
         );
       const reviewedBy = isValidUUID ? adminId : null;
 
-      // Validate status
       const validStatuses = [
         "blur_selfie",
         "invalid_document",
@@ -748,7 +634,6 @@ router.post(
         });
       }
 
-      // Update document status
       const { error: docError } = await supabase
         .from("kyc_documents")
         .update({
@@ -769,7 +654,6 @@ router.post(
         });
       }
 
-      // If any document is rejected, update application status
       if (status !== "approved") {
         await supabase
           .from("kyc_applications")
@@ -783,11 +667,7 @@ router.post(
       res.json({
         success: true,
         message: "Document feedback sent successfully",
-        data: {
-          documentId,
-          status,
-          feedback,
-        },
+        data: { documentId, status, feedback },
       });
     } catch (error) {
       console.error("Document feedback error:", error);
@@ -802,13 +682,11 @@ router.post(
 // Get admin dashboard stats
 router.get("/stats", async (req: AuthRequest, res: Response) => {
   try {
-    // Get application stats
     const { data: applications } = await supabase
       .from("kyc_applications")
       .select("status, submitted_at, approved_at")
       .not("status", "eq", "draft");
 
-    // Get recent activity - FIXED
     const { data: recentActivity } = await supabase
       .from("kyc_status_history")
       .select(
@@ -821,7 +699,6 @@ router.get("/stats", async (req: AuthRequest, res: Response) => {
       .order("created_at", { ascending: false })
       .limit(10);
 
-    // Calculate stats
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
@@ -835,19 +712,14 @@ router.get("/stats", async (req: AuthRequest, res: Response) => {
         applications?.filter((a) => a.status === "approved").length || 0,
       rejected_total:
         applications?.filter((a) => a.status === "rejected").length || 0,
-
-      // Recent stats (last 30 days)
       recent_submissions:
         applications?.filter(
           (a) => a.submitted_at && new Date(a.submitted_at) > thirtyDaysAgo,
         ).length || 0,
-
       recent_approvals:
         applications?.filter(
           (a) => a.approved_at && new Date(a.approved_at) > thirtyDaysAgo,
         ).length || 0,
-
-      // Average processing time (in days)
       avg_processing_time:
         applications
           ?.filter((a) => a.approved_at && a.submitted_at)

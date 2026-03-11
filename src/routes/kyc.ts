@@ -1,5 +1,4 @@
 // backend/routes/kycRoutes.ts
-// ============================================
 import express, { Response } from "express";
 import {
   AuthRequest,
@@ -10,9 +9,141 @@ import { supabaseAdmin as supabase } from "../config/database";
 import { uploadMiddleware } from "../middleware/upload";
 import flutterwaveService from "../services/flutterwaveService";
 import { emailService } from "../services/emailService";
+import dojahService from "../services/dojahService"; // ✅ NEW
 
 const router = express.Router();
 
+// ============================================
+// ✅ NEW: POST /api/kyc/verify-nin
+// ============================================
+router.post(
+  "/verify-nin",
+  authenticateForKyc,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const userId = req.user!.id;
+      const { nin } = req.body;
+
+      console.log("\n=== NIN VERIFICATION REQUEST ===");
+      console.log("User ID:", userId);
+      console.log("NIN:", nin);
+
+      // Validate NIN format
+      if (!nin) {
+        return res.status(400).json({
+          success: false,
+          message: "NIN is required",
+        });
+      }
+
+      if (!/^\d{11}$/.test(nin)) {
+        return res.status(400).json({
+          success: false,
+          message: "NIN must be exactly 11 digits",
+        });
+      }
+
+      // Check if already verified for this user to avoid burning credits
+      const { data: existingVerification } = await supabase
+        .from("nin_verifications")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("nin", nin)
+        .eq("is_verified", true)
+        .single();
+
+      if (existingVerification) {
+        console.log("✅ Returning cached NIN verification");
+        return res.json({
+          success: true,
+          data: {
+            firstName: existingVerification.first_name,
+            lastName: existingVerification.last_name,
+            middleName: existingVerification.middle_name,
+            dateOfBirth: existingVerification.date_of_birth,
+            gender: existingVerification.gender,
+            photo: existingVerification.photo_url,
+            is_verified: true,
+            cached: true,
+          },
+        });
+      }
+
+      // Call Dojah API
+      const ninData = await dojahService.verifyNIN(nin);
+
+      // Save verification result to DB
+      const { error: saveError } = await supabase
+        .from("nin_verifications")
+        .upsert({
+          user_id: userId,
+          nin: nin,
+          first_name: ninData.firstName,
+          last_name: ninData.lastName,
+          middle_name: ninData.middleName || null,
+          date_of_birth: ninData.dateOfBirth || null,
+          gender: ninData.gender || null,
+          phone: ninData.phone || null,
+          photo_url: ninData.photo || null,
+          is_verified: true,
+          verified_at: new Date().toISOString(),
+        });
+
+      if (saveError) {
+        console.error("Failed to save NIN verification:", saveError);
+        // Don't fail the request - we still have the data
+      }
+
+      console.log("✅ NIN verified successfully:", ninData.firstName, ninData.lastName);
+
+      res.json({
+        success: true,
+        data: {
+          firstName: ninData.firstName,
+          lastName: ninData.lastName,
+          middleName: ninData.middleName,
+          dateOfBirth: ninData.dateOfBirth,
+          gender: ninData.gender,
+          photo: ninData.photo,
+          is_verified: true,
+          cached: false,
+        },
+      });
+    } catch (error: any) {
+      console.error("NIN verification error:", error);
+
+      if (error.message?.includes("Invalid NIN")) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid NIN. Please check the number and try again.",
+        });
+      }
+
+      if (error.message?.includes("not found")) {
+        return res.status(404).json({
+          success: false,
+          message: "NIN not found in the government database.",
+        });
+      }
+
+      if (error.message?.includes("credits")) {
+        return res.status(503).json({
+          success: false,
+          message: "Verification service temporarily unavailable.",
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "NIN verification failed. Please try again.",
+      });
+    }
+  }
+);
+
+// ============================================
+// POST /api/kyc/verify-bank (unchanged)
+// ============================================
 router.post(
   "/verify-bank",
   authenticateForKyc,
@@ -40,7 +171,6 @@ router.post(
         });
       }
 
-      // Check if already verified
       const { data: existing } = await supabase
         .from("bank_verifications")
         .select("*")
@@ -49,8 +179,6 @@ router.post(
         .eq("bank_code", bankCode)
         .eq("is_verified", true)
         .single();
-
-      console.log("Existing verification found:", existing);
 
       if (existing) {
         return res.json({
@@ -63,14 +191,10 @@ router.post(
         });
       }
 
-      // Verify with Flutterwave
-      console.log("Calling Flutterwave verification...");
       const verification = await flutterwaveService.verifyAccount(
         accountNumber,
         bankCode
       );
-
-      console.log("Flutterwave response:", verification);
 
       if (!verification || !verification.account_name) {
         return res.status(400).json({
@@ -79,8 +203,6 @@ router.post(
         });
       }
 
-      // Store verification result
-      console.log("Saving to database...");
       const { data: savedVerification, error: saveError } = await supabase
         .from("bank_verifications")
         .upsert({
@@ -94,9 +216,6 @@ router.post(
         })
         .select()
         .single();
-
-      console.log("Save result:", savedVerification);
-      console.log("Save error:", saveError);
 
       if (saveError) {
         console.error("❌ Failed to save verification:", saveError);
@@ -122,14 +241,15 @@ router.post(
 
       res.status(500).json({
         success: false,
-        message:
-          "Verification service temporarily unavailable. Please try again.",
+        message: "Verification service temporarily unavailable. Please try again.",
       });
     }
   }
 );
 
-// POST /api/kyc/upload
+// ============================================
+// POST /api/kyc/upload (unchanged)
+// ============================================
 router.post(
   "/upload",
   authenticateForKyc,
@@ -140,35 +260,21 @@ router.post(
       const { document_type } = req.body;
       const file = req.file;
 
-      console.log("📤 Upload endpoint hit:", {
-        userId,
-        document_type,
-        hasFile: !!file,
-      });
+      console.log("📤 Upload endpoint hit:", { userId, document_type, hasFile: !!file });
 
       if (!file) {
-        return res.status(400).json({
-          success: false,
-          message: "No file uploaded",
-        });
+        return res.status(400).json({ success: false, message: "No file uploaded" });
       }
 
       if (!document_type) {
-        return res.status(400).json({
-          success: false,
-          message: "Document type is required",
-        });
+        return res.status(400).json({ success: false, message: "Document type is required" });
       }
 
       const validTypes = ["id_card", "selfie", "business_cert", "store_logo"];
       if (!validTypes.includes(document_type)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid document type",
-        });
+        return res.status(400).json({ success: false, message: "Invalid document type" });
       }
 
-      // Get or create application
       let { data: application } = await supabase
         .from("kyc_applications")
         .select("application_id")
@@ -178,11 +284,7 @@ router.post(
       if (!application) {
         const { data: newApp, error } = await supabase
           .from("kyc_applications")
-          .insert({
-            user_id: userId,
-            status: "draft",
-            current_step: 1,
-          })
+          .insert({ user_id: userId, status: "draft", current_step: 1 })
           .select("application_id")
           .single();
 
@@ -190,7 +292,6 @@ router.post(
         application = newApp;
       }
 
-      // Store document record
       const { data: document, error: docError } = await supabase
         .from("kyc_documents")
         .insert({
@@ -207,17 +308,11 @@ router.post(
 
       if (docError) throw docError;
 
-      // Update application with file URL
       const updateField =
-        document_type === "id_card"
-          ? "id_document_url"
-          : document_type === "selfie"
-          ? "selfie_photo_url"
-          : document_type === "business_cert"
-          ? "business_cert_url"
-          : document_type === "store_logo"
-          ? "store_logo_url"
-          : null;
+        document_type === "id_card" ? "id_document_url" :
+        document_type === "selfie" ? "selfie_photo_url" :
+        document_type === "business_cert" ? "business_cert_url" :
+        document_type === "store_logo" ? "store_logo_url" : null;
 
       if (updateField) {
         await supabase
@@ -229,45 +324,30 @@ router.post(
       res.json({
         success: true,
         message: "Document uploaded successfully",
-        data: {
-          document_id: document.document_id,
-          file_url: file.path,
-          document_type,
-        },
+        data: { document_id: document.document_id, file_url: file.path, document_type },
       });
     } catch (error) {
       console.error("Document upload error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
+      res.status(500).json({ success: false, message: "Internal server error" });
     }
   }
 );
 
 // ============================================
-// Get list of banks (for dropdown)
+// GET /api/kyc/banks (unchanged)
 // ============================================
 router.get("/banks", async (req: AuthRequest, res: Response) => {
   try {
-    const country = "NG"; // Nigeria
-    const banks = await flutterwaveService.getBanks(country);
-
-    res.json({
-      success: true,
-      data: banks,
-    });
+    const banks = await flutterwaveService.getBanks("NG");
+    res.json({ success: true, data: banks });
   } catch (error) {
     console.error("Failed to fetch banks:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to load banks",
-    });
+    res.status(500).json({ success: false, message: "Failed to load banks" });
   }
 });
 
 // ============================================
-// UPDATED: KYC Submit - Now handles bank verification properly
+// POST /api/kyc/submit — Updated to check NIN verification
 // ============================================
 router.post(
   "/submit",
@@ -278,7 +358,6 @@ router.post(
       const { formData } = req.body;
 
       console.log("Received KYC submission:", formData);
-
       console.log("\n=== VALIDATION CHECKS ===");
 
       // Validate identity
@@ -288,7 +367,6 @@ router.post(
         !formData.verifyIdentity?.lga ||
         !formData.verifyIdentity?.idNum
       ) {
-        console.log("❌ FAILED: Identity verification information");
         return res.status(400).json({
           success: false,
           message: "Identity verification information is incomplete",
@@ -296,9 +374,26 @@ router.post(
       }
       console.log("✅ PASSED: Identity verification");
 
+      // ✅ NEW: Check that NIN was actually verified via Dojah
+      const { data: ninVerification } = await supabase
+        .from("nin_verifications")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("nin", formData.verifyIdentity.idNum)
+        .eq("is_verified", true)
+        .single();
+
+      if (!ninVerification) {
+        console.log("❌ FAILED: NIN not verified");
+        return res.status(400).json({
+          success: false,
+          message: "NIN must be verified before submission. Please verify your NIN on step 1.",
+        });
+      }
+      console.log("✅ PASSED: NIN verified —", ninVerification.first_name, ninVerification.last_name);
+
       // Validate business info
       if (!formData.businessInfo?.storeName) {
-        console.log("❌ FAILED: Business information - missing storeName");
         return res.status(400).json({
           success: false,
           message: "Business information is incomplete",
@@ -308,7 +403,6 @@ router.post(
 
       // Validate store setup
       if (!formData.storeSetup?.storeCat || !formData.storeSetup?.policyAgree) {
-        console.log("❌ FAILED: Store setup information");
         return res.status(400).json({
           success: false,
           message: "Store setup information is incomplete",
@@ -316,12 +410,8 @@ router.post(
       }
       console.log("✅ PASSED: Store setup");
 
-      // Validate bank account info
-      if (
-        !formData.withdrawalDetails?.accountNumber ||
-        !formData.withdrawalDetails?.bankCode
-      ) {
-        console.log("❌ FAILED: Bank account information");
+      // Validate bank account
+      if (!formData.withdrawalDetails?.accountNumber || !formData.withdrawalDetails?.bankCode) {
         return res.status(400).json({
           success: false,
           message: "Bank account information is incomplete",
@@ -329,17 +419,8 @@ router.post(
       }
       console.log("✅ PASSED: Bank account information");
 
-      // ============================================
-      // UPDATED: Check bank verification with fallback
-      // ============================================
-      console.log("\n=== CHECKING BANK VERIFICATION ===");
-      console.log("User ID:", userId);
-      console.log("Account Number:", formData.withdrawalDetails.accountNumber);
-      console.log("Bank Code:", formData.withdrawalDetails.bankCode);
-      console.log("Account Name from frontend:", formData.withdrawalDetails.accountName);
-
-      // First, check if verification exists in bank_verifications table
-      let { data: bankVerification, error: bankVerifyError } = await supabase
+      // Check bank verification
+      let { data: bankVerification } = await supabase
         .from("bank_verifications")
         .select("*")
         .eq("user_id", userId)
@@ -348,15 +429,7 @@ router.post(
         .eq("is_verified", true)
         .single();
 
-      console.log("Bank verification from table:", bankVerification);
-
-      // ✅ NEW: If not found in bank_verifications, check if frontend provided accountName
-      // This means it was verified via /seller/bank-account/verify (Paystack)
       if (!bankVerification && formData.withdrawalDetails.accountName) {
-        console.log("⚠️ No bank_verifications record found, but frontend provided accountName");
-        console.log("Creating bank_verifications record from Paystack verification...");
-
-        // Create the verification record since Paystack already verified it
         const { data: newVerification, error: createError } = await supabase
           .from("bank_verifications")
           .upsert({
@@ -366,22 +439,14 @@ router.post(
             account_name: formData.withdrawalDetails.accountName,
             is_verified: true,
             verified_at: new Date().toISOString(),
-            // Note: We don't have paystack_response here, but that's okay
           })
           .select()
           .single();
 
-        if (createError) {
-          console.error("Failed to create bank verification record:", createError);
-        } else {
-          console.log("✅ Created bank_verifications record:", newVerification);
-          bankVerification = newVerification;
-        }
+        if (!createError) bankVerification = newVerification;
       }
 
-      // Also check seller_bank_accounts table as fallback
       if (!bankVerification) {
-        console.log("Checking seller_bank_accounts table...");
         const { data: sellerBankAccount } = await supabase
           .from("seller_bank_accounts")
           .select("*")
@@ -392,8 +457,6 @@ router.post(
           .single();
 
         if (sellerBankAccount) {
-          console.log("✅ Found verified account in seller_bank_accounts:", sellerBankAccount);
-          // Create bank_verifications record from seller_bank_accounts
           const { data: newVerification } = await supabase
             .from("bank_verifications")
             .upsert({
@@ -414,59 +477,34 @@ router.post(
         }
       }
 
-      // Final check - if still no verification, reject
       if (!bankVerification) {
-        console.log("❌ FAILED: Bank account not verified");
-        console.log("No verification found in bank_verifications or seller_bank_accounts");
-        console.log("And no accountName provided from frontend");
         return res.status(400).json({
           success: false,
-          message:
-            "Bank account must be verified before submission. Please verify your bank account again.",
+          message: "Bank account must be verified before submission.",
         });
       }
       console.log("✅ PASSED: Bank verification");
 
-      // ============================================
-      // Check for required documents
-      // ============================================
-      const { data: documents, error: docError } = await supabase
+      // Check documents
+      const { data: documents } = await supabase
         .from("kyc_documents")
         .select("document_type")
         .eq("user_id", userId);
 
-      console.log("Documents query result:", documents);
-
       const uploadedTypes = documents?.map((d) => d.document_type) || [];
-      
-      // ✅ UPDATED: business_cert is now optional
       const requiredDocs = ["id_card", "selfie", "store_logo"];
-      const missingDocs = requiredDocs.filter(
-        (doc) => !uploadedTypes.includes(doc)
-      );
-
-      console.log("Uploaded document types:", uploadedTypes);
-      console.log("Required document types:", requiredDocs);
-      console.log("Missing documents:", missingDocs);
+      const missingDocs = requiredDocs.filter((doc) => !uploadedTypes.includes(doc));
 
       if (missingDocs.length > 0) {
-        console.log("❌ FAILED: Missing required documents:", missingDocs.join(", "));
         return res.status(400).json({
           success: false,
           message: `Missing required documents: ${missingDocs.join(", ")}`,
         });
       }
       console.log("✅ PASSED: All documents present");
-
       console.log("=== ALL VALIDATIONS PASSED ===\n");
 
-      // Get or create application
-      const { data: existingApp } = await supabase
-        .from("kyc_applications")
-        .select("application_id")
-        .eq("user_id", userId)
-        .single();
-
+      // Build application data
       const applicationData = {
         user_id: userId,
         status: "submitted",
@@ -477,6 +515,9 @@ router.post(
         identity_state: formData.verifyIdentity.state,
         identity_lga: formData.verifyIdentity.lga,
         identity_number: formData.verifyIdentity.idNum,
+
+        // ✅ Store verified NIN name from Dojah
+        nin_verified_name: `${ninVerification.first_name} ${ninVerification.last_name}`,
 
         // Business data
         store_name: formData.businessInfo.storeName,
@@ -491,7 +532,7 @@ router.post(
         active_hours: formData.storeSetup.activeHours,
         policies_agreed: formData.storeSetup.policyAgree,
 
-        // Bank data - use bankVerification.account_name (verified)
+        // Bank data
         account_number: formData.withdrawalDetails.accountNumber,
         bank_name: formData.withdrawalDetails.bankName,
         bank_code: formData.withdrawalDetails.bankCode,
@@ -501,6 +542,13 @@ router.post(
         updated_at: new Date().toISOString(),
       };
 
+      // Upsert application
+      const { data: existingApp } = await supabase
+        .from("kyc_applications")
+        .select("application_id")
+        .eq("user_id", userId)
+        .single();
+
       let application;
       if (existingApp) {
         const { data, error } = await supabase
@@ -509,7 +557,6 @@ router.post(
           .eq("application_id", existingApp.application_id)
           .select()
           .single();
-
         if (error) throw error;
         application = data;
       } else {
@@ -518,25 +565,15 @@ router.post(
           .insert(applicationData)
           .select()
           .single();
-
         if (error) throw error;
         application = data;
       }
 
       // Update user KYC status
-      const { error: userUpdateError } = await supabase
+      await supabase
         .from("users")
-        .update({
-          kyc_status: "submitted",
-          updated_at: new Date().toISOString(),
-        })
+        .update({ kyc_status: "submitted", updated_at: new Date().toISOString() })
         .eq("user_id", userId);
-
-      if (userUpdateError) {
-        console.error("Failed to update user kyc_status:", userUpdateError);
-      } else {
-        console.log(`✅ User ${userId} kyc_status updated to 'submitted'`);
-      }
 
       // Log status change
       await supabase.from("kyc_status_history").insert({
@@ -575,8 +612,7 @@ router.post(
 
       res.json({
         success: true,
-        message:
-          "KYC application submitted successfully! We will review your application within 2-3 business days.",
+        message: "KYC application submitted successfully! We will review your application within 2-3 business days.",
         data: {
           application_id: application.application_id,
           status: application.status,
@@ -585,10 +621,7 @@ router.post(
       });
     } catch (error) {
       console.error("KYC submission error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Internal server error. Please try again.",
-      });
+      res.status(500).json({ success: false, message: "Internal server error. Please try again." });
     }
   }
 );

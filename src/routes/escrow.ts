@@ -1,18 +1,19 @@
-// ================================================
-// BIDORO - ESCROW API ROUTES (SYNCED)
-// File: src/routes/escrow.ts
+// src/routes/escrow.ts  (updated for Fincra)
 //
-// FEE MODEL:
-//   8.2% platform commission is calculated internally
-//   by escrowService using src/config/pricing.ts.
-//   No fee params needed from the client.
+// Changes from Paystack version:
+//   1. Import fincraService / fincraConfig instead of paystack equivalents
+//   2. Webhook signature: compare verif-hash header to FINCRA_WEBHOOK_SECRET (plain equality)
+//   3. Webhook events:  charge.success     → charge.completed
+//                       transfer.success   → payout.successful
+//                       transfer.failed    → payout.failed
+//                       transfer.reversed  → payout.reversed
+//   4. Webhook data shape: payout reference is in event.data.customerReference
 // ================================================
 
 import { Router, Request, Response } from "express";
-import crypto from "crypto";
 import { escrowService } from "../services/escrowService";
-import { paystackService } from "../services/paystackService";
-import { paystackConfig } from "../config/paystack";
+import { fincraService } from "../services/fincraService";
+import { fincraConfig } from "../config/fincra";
 import { authenticateToken, AuthRequest } from "../middleware/auth";
 import { calculateEscrowSplit } from "../config/pricing";
 import walletService from "../services/walletService";
@@ -28,7 +29,7 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     try {
       const { orderId, productId, sellerId, amount } = req.body;
-      const buyerId = req.user!.id;
+      const buyerId    = req.user!.id;
       const buyerEmail = req.user!.email;
 
       if (!orderId || !sellerId || !amount) {
@@ -46,7 +47,7 @@ router.post(
         return res.status(400).json({ success: false, error: "You cannot purchase your own product" });
       }
 
-      // 8.2% split is calculated inside escrowService
+      // 8.2% split calculated inside escrowService (unchanged)
       const result = await escrowService.createEscrowPayment({
         buyerId,
         sellerId,
@@ -76,7 +77,7 @@ router.get(
     try {
       const reference = String(req.params.reference);
 
-      const verifyResult = await paystackService.verifyTransaction(reference);
+      const verifyResult = await fincraService.verifyTransaction(reference);
       if (!verifyResult.success) {
         return res.status(400).json({ success: false, error: "Payment verification failed" });
       }
@@ -110,26 +111,31 @@ router.get(
 
 // ================================================
 // POST /api/escrow/webhook
+//
+// Fincra sends a plain secret in the "verif-hash" header.
+// Set FINCRA_WEBHOOK_SECRET in your dashboard under Settings → Webhooks.
 // ================================================
 router.post("/webhook", async (req: Request, res: Response) => {
   try {
-    const hash = crypto
-      .createHmac("sha512", paystackConfig.secretKey)
-      .update(JSON.stringify(req.body))
-      .digest("hex");
+    // ── Signature verification ──────────────────────────────────────────────
+    const verifHash = String(req.headers["verif-hash"] || "");
 
-    const signature = String(req.headers["x-paystack-signature"] || "");
-    if (hash !== signature) {
-      console.error("Invalid webhook signature");
+    if (!fincraConfig.webhookSecret || verifHash !== fincraConfig.webhookSecret) {
+      console.error("Invalid Fincra webhook signature");
       return res.sendStatus(400);
     }
 
     const event = req.body;
-    console.log("Paystack webhook event:", event.event);
+    console.log("Fincra webhook event:", event.event);
 
     switch (event.event) {
-      case "charge.success": {
-        const { reference, metadata } = event.data;
+      // ── Payment collected ─────────────────────────────────────────────────
+      case "charge.completed": {
+        const { reference, metadata, status } = event.data;
+
+        // Only process successful charges
+        if (status !== "successful") break;
+
         if (metadata?.type === "escrow_payment") {
           await escrowService.handlePaymentSuccess(reference, event.data);
 
@@ -143,8 +149,11 @@ router.post("/webhook", async (req: Request, res: Response) => {
         break;
       }
 
-      case "transfer.success": {
-        const ref = event.data.reference;
+      // ── Payout successful ─────────────────────────────────────────────────
+      case "payout.successful": {
+        // Fincra puts our reference in customerReference, not reference
+        const ref = event.data.customerReference ?? event.data.reference;
+
         if (ref?.startsWith("WTH")) {
           await walletService.handleWithdrawalWebhook(ref, "success", event.data);
         }
@@ -154,8 +163,10 @@ router.post("/webhook", async (req: Request, res: Response) => {
         break;
       }
 
-      case "transfer.failed": {
-        const ref = event.data.reference;
+      // ── Payout failed ─────────────────────────────────────────────────────
+      case "payout.failed": {
+        const ref = event.data.customerReference ?? event.data.reference;
+
         if (ref?.startsWith("WTH")) {
           await walletService.handleWithdrawalWebhook(ref, "failed", event.data);
         }
@@ -165,31 +176,29 @@ router.post("/webhook", async (req: Request, res: Response) => {
         break;
       }
 
-      case "transfer.reversed": {
-        const ref = event.data.reference;
+      // ── Payout reversed ───────────────────────────────────────────────────
+      case "payout.reversed": {
+        const ref = event.data.customerReference ?? event.data.reference;
+
         if (ref?.startsWith("WTH")) {
           await walletService.handleWithdrawalWebhook(ref, "reversed", event.data);
         }
         break;
       }
 
-      case "refund.processed":
-        console.log("Refund processed:", event.data.reference);
-        break;
-
       default:
-        console.log("Unhandled webhook event:", event.event);
+        console.log("Unhandled Fincra webhook event:", event.event);
     }
 
     res.sendStatus(200);
   } catch (error) {
     console.error("Webhook error:", error);
-    res.sendStatus(200);
+    res.sendStatus(200); // Always 200 to stop retries on app errors
   }
 });
 
 // ================================================
-// POST /api/escrow/:escrowId/ship
+// POST /api/escrow/:escrowId/ship   (unchanged)
 // ================================================
 router.post(
   "/:escrowId/ship",
@@ -213,7 +222,7 @@ router.post(
 );
 
 // ================================================
-// POST /api/escrow/:escrowId/confirm
+// POST /api/escrow/:escrowId/confirm   (unchanged)
 // ================================================
 router.post(
   "/:escrowId/confirm",
@@ -221,7 +230,7 @@ router.post(
   async (req: AuthRequest, res: Response) => {
     try {
       const escrowId = String(req.params.escrowId);
-      const buyerId = req.user!.id;
+      const buyerId  = req.user!.id;
 
       const result = await escrowService.confirmDelivery(escrowId, buyerId);
       if (!result.success) return res.status(400).json(result);
@@ -234,7 +243,7 @@ router.post(
 );
 
 // ================================================
-// POST /api/escrow/:escrowId/dispute
+// POST /api/escrow/:escrowId/dispute   (unchanged)
 // ================================================
 router.post(
   "/:escrowId/dispute",
@@ -243,15 +252,22 @@ router.post(
     try {
       const escrowId = String(req.params.escrowId);
       const { reason } = req.body;
-      const buyerId = req.user!.id;
+      const buyerId   = req.user!.id;
 
       if (!reason || reason.length < 10) {
-        return res.status(400).json({ success: false, error: "Please provide a detailed reason (at least 10 characters)" });
+        return res.status(400).json({
+          success: false,
+          error: "Please provide a detailed reason (at least 10 characters)",
+        });
       }
 
       const result = await escrowService.openDispute(escrowId, buyerId, reason);
       if (!result.success) return res.status(400).json(result);
-      res.json({ success: true, message: "Dispute opened. Our team will review and contact you.", data: result.data });
+      res.json({
+        success: true,
+        message: "Dispute opened. Our team will review and contact you.",
+        data: result.data,
+      });
     } catch (error) {
       console.error("Open dispute error:", error);
       res.status(500).json({ success: false, error: "Server error" });
@@ -260,7 +276,7 @@ router.post(
 );
 
 // ================================================
-// POST /api/escrow/:escrowId/resolve (admin only)
+// POST /api/escrow/:escrowId/resolve (admin only)  (unchanged)
 // ================================================
 router.post(
   "/:escrowId/resolve",
@@ -269,9 +285,8 @@ router.post(
     try {
       const escrowId = String(req.params.escrowId);
       const { resolution, outcome } = req.body;
-      const adminId = req.user!.id;
+      const adminId  = req.user!.id;
 
-      // Verify admin role
       const supabaseAdmin = require("../config/database").supabaseAdmin;
       const { data: user } = await supabaseAdmin
         .from("users").select("role").eq("user_id", adminId).single();
@@ -286,7 +301,10 @@ router.post(
 
       const validOutcomes = ["release_to_seller", "refund_buyer", "partial_refund"];
       if (!validOutcomes.includes(outcome)) {
-        return res.status(400).json({ success: false, error: `Invalid outcome. Must be: ${validOutcomes.join(", ")}` });
+        return res.status(400).json({
+          success: false,
+          error: `Invalid outcome. Must be: ${validOutcomes.join(", ")}`,
+        });
       }
 
       const result = await escrowService.resolveDispute(escrowId, adminId, resolution, outcome);
@@ -300,7 +318,7 @@ router.post(
 );
 
 // ================================================
-// GET /api/escrow/:escrowId
+// GET /api/escrow/:escrowId   (unchanged)
 // ================================================
 router.get(
   "/:escrowId",
@@ -308,7 +326,7 @@ router.get(
   async (req: AuthRequest, res: Response) => {
     try {
       const escrowId = String(req.params.escrowId);
-      const userId = req.user!.id;
+      const userId   = req.user!.id;
 
       const result = await escrowService.getEscrowById(escrowId, userId);
       if (!result.success) return res.status(404).json(result);
@@ -321,20 +339,15 @@ router.get(
 );
 
 // ================================================
-// GET /api/escrow
+// GET /api/escrow   (unchanged)
 // ================================================
 router.get("/", authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const role = req.query.role ? String(req.query.role) as "buyer" | "seller" | "both" : "both";
+    const role   = req.query.role ? String(req.query.role) as "buyer" | "seller" | "both" : "both";
     const status = req.query.status ? String(req.query.status) : undefined;
 
-    const result = await escrowService.getUserEscrows(
-      userId,
-      role,
-      status
-    );
-
+    const result = await escrowService.getUserEscrows(userId, role, status);
     if (!result.success) return res.status(400).json(result);
     res.json({ success: true, data: result.data });
   } catch (error) {
@@ -344,8 +357,7 @@ router.get("/", authenticateToken, async (req: AuthRequest, res: Response) => {
 });
 
 // ================================================
-// GET /api/escrow/fees/calculate
-// Public endpoint to show fee breakdown for an amount
+// GET /api/escrow/fees/calculate   (unchanged)
 // ================================================
 router.get("/fees/calculate", async (req: Request, res: Response) => {
   try {
@@ -356,7 +368,6 @@ router.get("/fees/calculate", async (req: Request, res: Response) => {
     }
 
     const split = calculateEscrowSplit(amount);
-
     res.json({ success: true, data: split });
   } catch (error) {
     console.error("Calculate fees error:", error);

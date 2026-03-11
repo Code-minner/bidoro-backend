@@ -1,13 +1,9 @@
-// ================================================
-// BIDORO - ESCROW CRON JOBS (SYNCED)
-// File: src/services/escrowCron.ts
+// src/services/escrowCron.ts  (updated for Fincra)
 //
-// Schedule these via your cron runner (e.g. node-cron):
-//   processAutoReleases    -> every 1 hour
-//   reconcileMissingEscrows -> every 2 hours
-//   sendDeliveryReminders  -> every 6 hours
-//   retryFailedPayouts     -> every 2 hours
-//   syncStatusCheck        -> every 4 hours
+// Change from Paystack version:
+//   retryFailedPayouts: removed check for paystack_recipient_code.
+//   Fincra sends to bank account details directly, so all we need is
+//   account_number + bank_code in seller_bank_accounts.
 // ================================================
 
 import { escrowService } from "./escrowService";
@@ -19,9 +15,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// ================================================
-// 1. AUTO-RELEASE ESCROWS (every 1 hour)
-// ================================================
+// ── 1. AUTO-RELEASE ESCROWS (every 1 hour) ─────────────────────────────────
 export const processAutoReleases = async () => {
   console.log("[CRON] Processing auto-releases...");
   try {
@@ -34,12 +28,7 @@ export const processAutoReleases = async () => {
   }
 };
 
-// ================================================
-// 2. RECONCILE MISSING ESCROW RECORDS (every 2 hours)
-//
-// Safety net: creates escrow_transactions for orders
-// that went through checkout but never got a record.
-// ================================================
+// ── 2. RECONCILE MISSING ESCROW RECORDS (every 2 hours) ────────────────────
 export const reconcileMissingEscrows = async () => {
   console.log("[CRON] Reconciling missing escrow records...");
   try {
@@ -52,9 +41,7 @@ export const reconcileMissingEscrows = async () => {
   }
 };
 
-// ================================================
-// 3. DELIVERY REMINDERS (every 6 hours)
-// ================================================
+// ── 3. DELIVERY REMINDERS (every 6 hours) ──────────────────────────────────
 export const sendDeliveryReminders = async () => {
   console.log("[CRON] Checking for delivery reminders...");
   try {
@@ -77,7 +64,6 @@ export const sendDeliveryReminders = async () => {
 
     for (const escrow of escrows) {
       try {
-        // Don't spam - check if already reminded today
         const today = new Date().toISOString().split("T")[0];
         const { data: existing } = await supabase
           .from("notifications")
@@ -99,23 +85,23 @@ export const sendDeliveryReminders = async () => {
 
         if (escrow.status === "shipped") {
           await notificationService.createNotification({
-            user_id: escrow.buyer_id,
-            title: "Confirm Your Delivery",
-            message: `Have you received order ${orderNum}? Please confirm so the seller can be paid.`,
-            category: "orders",
-            type: "info",
+            user_id:    escrow.buyer_id,
+            title:      "Confirm Your Delivery",
+            message:    `Have you received order ${orderNum}? Please confirm so the seller can be paid.`,
+            category:   "orders",
+            type:       "info",
             action_url: `/orders/${escrow.order_id}`,
-            metadata: { escrow_id: escrow.id, reminder_type: "delivery_reminder" },
+            metadata:   { escrow_id: escrow.id, reminder_type: "delivery_reminder" },
           });
         } else {
           await notificationService.createNotification({
-            user_id: escrow.seller_id,
-            title: "Ship Your Order",
-            message: `Order ${orderNum} is waiting to be shipped. Please ship soon.`,
-            category: "orders",
-            type: "warning",
+            user_id:    escrow.seller_id,
+            title:      "Ship Your Order",
+            message:    `Order ${orderNum} is waiting to be shipped. Please ship soon.`,
+            category:   "orders",
+            type:       "warning",
             action_url: `/seller/orders/${escrow.order_id}`,
-            metadata: { escrow_id: escrow.id, reminder_type: "shipping_reminder" },
+            metadata:   { escrow_id: escrow.id, reminder_type: "shipping_reminder" },
           });
         }
 
@@ -133,9 +119,10 @@ export const sendDeliveryReminders = async () => {
   }
 };
 
-// ================================================
-// 4. RETRY FAILED PAYOUTS (every 2 hours)
-// ================================================
+// ── 4. RETRY FAILED PAYOUTS (every 2 hours) ────────────────────────────────
+// CHANGED: no longer checks paystack_recipient_code.
+//          Fincra only needs account_number + bank_code, which are always
+//          present once a bank account row exists.
 export const retryFailedPayouts = async () => {
   console.log("[CRON] Retrying failed payouts...");
   try {
@@ -153,16 +140,17 @@ export const retryFailedPayouts = async () => {
     let retried = 0;
 
     for (const escrow of failed) {
-      // For pending_payout, check if seller now has a bank account
       if (escrow.status === "pending_payout") {
+        // For Fincra, just check that the seller has a bank account with required fields
         const { data: bank } = await supabase
           .from("seller_bank_accounts")
-          .select("paystack_recipient_code")
+          .select("account_number, bank_code")
           .eq("user_id", escrow.seller_id)
           .eq("is_primary", true)
           .single();
 
-        if (!bank?.paystack_recipient_code) continue;
+        // Skip if bank account is missing or incomplete
+        if (!bank?.account_number || !bank?.bank_code) continue;
       }
 
       const result = await escrowService.releaseFundsToSeller(escrow.id);
@@ -180,12 +168,8 @@ export const retryFailedPayouts = async () => {
   }
 };
 
-// ================================================
-// 5. SYNC STATUS CHECK (every 4 hours)
-//
-// Finds orders and escrow_transactions that have
-// fallen out of sync and corrects them.
-// ================================================
+// ── 5. SYNC STATUS CHECK (every 4 hours) ───────────────────────────────────
+// Unchanged — no payment-provider logic here.
 export const syncStatusCheck = async () => {
   console.log("[CRON] Running status sync check...");
   try {
@@ -207,84 +191,45 @@ export const syncStatusCheck = async () => {
       if (order && (order.status !== "completed" || order.payment_status !== "released")) {
         await supabase
           .from("orders")
-          .update({
-            status: "completed",
-            payment_status: "released",
-            escrow_amount: 0,
-            updated_at: new Date().toISOString(),
-          })
+          .update({ status: "completed", payment_status: "released", escrow_amount: 0, updated_at: new Date().toISOString() })
           .eq("order_id", escrow.order_id);
         fixed++;
-        console.log(`[SYNC] Fixed order ${escrow.order_id} -> completed/released`);
       }
     }
 
     // Case 2: Order disputed but escrow not
-    const { data: disputedOrders } = await supabase
-      .from("orders")
-      .select("order_id")
-      .eq("status", "disputed");
-
+    const { data: disputedOrders } = await supabase.from("orders").select("order_id").eq("status", "disputed");
     for (const order of disputedOrders || []) {
       const { data: escrow } = await supabase
-        .from("escrow_transactions")
-        .select("id, status")
-        .eq("order_id", order.order_id)
-        .maybeSingle();
-
+        .from("escrow_transactions").select("id, status").eq("order_id", order.order_id).maybeSingle();
       if (escrow && escrow.status !== "disputed") {
-        await supabase
-          .from("escrow_transactions")
-          .update({ status: "disputed", auto_release_at: null })
-          .eq("id", escrow.id);
+        await supabase.from("escrow_transactions")
+          .update({ status: "disputed", auto_release_at: null }).eq("id", escrow.id);
         fixed++;
-        console.log(`[SYNC] Fixed escrow ${escrow.id} -> disputed`);
       }
     }
 
     // Case 3: Order cancelled but escrow still held
-    const { data: cancelledOrders } = await supabase
-      .from("orders")
-      .select("order_id")
-      .eq("status", "cancelled");
-
+    const { data: cancelledOrders } = await supabase.from("orders").select("order_id").eq("status", "cancelled");
     for (const order of cancelledOrders || []) {
       const { data: escrow } = await supabase
-        .from("escrow_transactions")
-        .select("id, status")
-        .eq("order_id", order.order_id)
-        .maybeSingle();
-
+        .from("escrow_transactions").select("id, status").eq("order_id", order.order_id).maybeSingle();
       if (escrow && !["cancelled", "refunded", "released"].includes(escrow.status)) {
-        await supabase
-          .from("escrow_transactions")
-          .update({ status: "cancelled", auto_release_at: null })
-          .eq("id", escrow.id);
+        await supabase.from("escrow_transactions")
+          .update({ status: "cancelled", auto_release_at: null }).eq("id", escrow.id);
         fixed++;
-        console.log(`[SYNC] Fixed escrow ${escrow.id} -> cancelled`);
       }
     }
 
     // Case 4: Order shipped but escrow not
-    const { data: shippedOrders } = await supabase
-      .from("orders")
-      .select("order_id")
-      .eq("status", "shipped");
-
+    const { data: shippedOrders } = await supabase.from("orders").select("order_id").eq("status", "shipped");
     for (const order of shippedOrders || []) {
       const { data: escrow } = await supabase
-        .from("escrow_transactions")
-        .select("id, status")
-        .eq("order_id", order.order_id)
-        .maybeSingle();
-
+        .from("escrow_transactions").select("id, status").eq("order_id", order.order_id).maybeSingle();
       if (escrow && escrow.status === "escrow_held") {
-        await supabase
-          .from("escrow_transactions")
-          .update({ status: "shipped", shipped_at: new Date().toISOString() })
-          .eq("id", escrow.id);
+        await supabase.from("escrow_transactions")
+          .update({ status: "shipped", shipped_at: new Date().toISOString() }).eq("id", escrow.id);
         fixed++;
-        console.log(`[SYNC] Fixed escrow ${escrow.id} -> shipped`);
       }
     }
 

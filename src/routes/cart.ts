@@ -27,6 +27,8 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         product_id,
         quantity,
         pay_for_delivery,
+        auction_id,
+        override_price,
         created_at
       `)
       .eq('user_id', userId)
@@ -67,16 +69,18 @@ router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         id: item.id,
         productId: product.product_id,
         productName: product.name,
-        price: product.price || 0,
+        price: item.override_price || product.price || 0,
         quantity: item.quantity,
-        imageUrl: product.product_images?.[0]?.image_url || '/assets/product.png',  // FIXED
+        imageUrl: product.product_images?.[0]?.image_url || '/assets/product.png',
         sellerId: product.seller_id,
         sellerName: seller?.name || 'Unknown Seller',
         location: product.location_city 
           ? `${product.location_city}, ${product.location_state}` 
           : product.location_state || '',
         payForDelivery: item.pay_for_delivery,
-        stockQuantity: product.stock_quantity || 0
+        stockQuantity: product.stock_quantity || 0,
+        auctionId: item.auction_id || null,
+        isAuction: !!item.auction_id,
       });
     }
 

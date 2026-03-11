@@ -8,17 +8,11 @@ const router = express.Router();
 // HELPER FUNCTIONS
 // ============================================================
 
-/**
- * Check if a string is a valid UUID
- */
 const isValidUUID = (str: string): boolean => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(str);
 };
 
-/**
- * Check if auctions are currently open based on auction_settings
- */
 const isAuctionWindowOpen = async (): Promise<{ isOpen: boolean; message: string; nextWindow?: string }> => {
   const { data: settings } = await supabase
     .from('auction_settings')
@@ -31,8 +25,8 @@ const isAuctionWindowOpen = async (): Promise<{ isOpen: boolean; message: string
   }
 
   const now = new Date();
-  const currentDay = now.getDay(); // 0 = Sunday, 5 = Friday
-  const currentTime = now.toTimeString().slice(0, 8); // HH:MM:SS
+  const currentDay = now.getDay();
+  const currentTime = now.toTimeString().slice(0, 8);
 
   const isCorrectDay = currentDay === settings.auction_day;
   const isWithinTime = currentTime >= settings.start_time && currentTime <= settings.end_time;
@@ -41,10 +35,9 @@ const isAuctionWindowOpen = async (): Promise<{ isOpen: boolean; message: string
     return { isOpen: true, message: 'Auctions are open!' };
   }
 
-  // Calculate next auction window
   let daysUntilNext = (settings.auction_day - currentDay + 7) % 7;
   if (daysUntilNext === 0 && currentTime > settings.end_time) {
-    daysUntilNext = 7; // Next week
+    daysUntilNext = 7;
   }
 
   const nextDate = new Date(now);
@@ -58,9 +51,6 @@ const isAuctionWindowOpen = async (): Promise<{ isOpen: boolean; message: string
   };
 };
 
-/**
- * Calculate minimum next bid
- */
 const getMinimumBid = async (auctionId: string): Promise<number> => {
   const { data: auction } = await supabase
     .from('auctions')
@@ -79,25 +69,10 @@ const getMinimumBid = async (auctionId: string): Promise<number> => {
   return currentBid + increment;
 };
 
-/**
- * Transition auction statuses based on their schedule.
- * 
- * Lifecycle: scheduled → active → ended/no_bids → awarded → completed
- * 
- * - scheduled → active:  when current time is within [scheduled_start, scheduled_end]
- * - active → ended:      when scheduled_end has passed AND auction has bids
- * - active → no_bids:    when scheduled_end has passed AND auction has 0 bids
- * 
- * Called automatically before fetching auctions so statuses are always up to date.
- */
 const transitionAuctionStatuses = async () => {
   const now = new Date().toISOString();
 
   try {
-    // ----------------------------------------------------------------
-    // 1. ACTIVATE: scheduled → active
-    //    Auctions whose window has started but not yet ended
-    // ----------------------------------------------------------------
     const { data: activated, error: activateError } = await supabase
       .from('auctions')
       .update({ status: 'active', actual_start: now })
@@ -112,10 +87,6 @@ const transitionAuctionStatuses = async () => {
       console.log(`✅ Activated ${activated.length} auction(s):`, activated.map(a => a.title).join(', '));
     }
 
-    // ----------------------------------------------------------------
-    // 2. EXPIRE: active → ended OR no_bids
-    //    Auctions whose scheduled_end has passed
-    // ----------------------------------------------------------------
     const { data: expiredAuctions, error: fetchExpiredError } = await supabase
       .from('auctions')
       .select('auction_id, total_bids')
@@ -131,7 +102,6 @@ const transitionAuctionStatuses = async () => {
       const withBids = expiredAuctions.filter(a => a.total_bids > 0).map(a => a.auction_id);
       const noBids = expiredAuctions.filter(a => a.total_bids === 0).map(a => a.auction_id);
 
-      // Auctions with bids → ended (seller needs to award winner)
       if (withBids.length) {
         const { error: endError } = await supabase
           .from('auctions')
@@ -144,7 +114,6 @@ const transitionAuctionStatuses = async () => {
           console.log(`🔴 Ended ${withBids.length} auction(s) with bids`);
         }
 
-        // Mark the highest bid on each auction as 'winning'
         for (const auctionId of withBids) {
           const { data: topBid } = await supabase
             .from('bids')
@@ -156,7 +125,6 @@ const transitionAuctionStatuses = async () => {
             .single();
 
           if (topBid) {
-            // Mark all other bids as outbid
             await supabase
               .from('bids')
               .update({ status: 'outbid' })
@@ -164,7 +132,6 @@ const transitionAuctionStatuses = async () => {
               .eq('status', 'active')
               .neq('bid_id', topBid.bid_id);
 
-            // Mark winning bid
             await supabase
               .from('bids')
               .update({ status: 'winning' })
@@ -173,7 +140,6 @@ const transitionAuctionStatuses = async () => {
         }
       }
 
-      // Auctions without bids → no_bids
       if (noBids.length) {
         const { error: noBidsError } = await supabase
           .from('auctions')
@@ -190,11 +156,6 @@ const transitionAuctionStatuses = async () => {
       console.log(`🔄 Transitioned ${expiredAuctions.length} expired auction(s) — ${withBids.length} ended, ${noBids.length} no_bids`);
     }
 
-    // ----------------------------------------------------------------
-    // 3. EXPIRE SCHEDULED: scheduled → no_bids
-    //    Auctions that were never activated (missed their entire window)
-    //    e.g. server was down during the Friday window
-    // ----------------------------------------------------------------
     const { data: missedAuctions, error: missedError } = await supabase
       .from('auctions')
       .select('auction_id')
@@ -219,10 +180,6 @@ const transitionAuctionStatuses = async () => {
 // SELLER ROUTES
 // ============================================================
 
-/**
- * POST /api/auctions
- * Create a new auction (from existing product or new)
- */
 router.post('/', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const sellerId = req.user!.id;
@@ -240,7 +197,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       locationCity
     } = req.body;
 
-    // Validate required fields
     if (!title || !startingPrice) {
       return res.status(400).json({
         success: false,
@@ -255,7 +211,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       });
     }
 
-    // Price validation
     if (buyNowPrice && buyNowPrice <= startingPrice) {
       return res.status(400).json({
         success: false,
@@ -279,7 +234,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       }
     }
 
-    // If productId provided, fetch product details
     let productData: any = null;
     if (productId) {
       const { data: product, error } = await supabase
@@ -302,7 +256,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       productData = product;
     }
 
-    // Handle category_id
     let finalCategoryId = null;
     if (productData?.category_id) {
       finalCategoryId = productData.category_id;
@@ -310,7 +263,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       finalCategoryId = categoryId;
     }
 
-    // Calculate scheduled start/end for the next Friday window
     const { data: settings } = await supabase
       .from('auction_settings')
       .select('*')
@@ -320,16 +272,14 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
     let scheduledStart = new Date();
     let scheduledEnd = new Date();
 
-    const auctionDay = settings?.auction_day ?? 5; // Friday
+    const auctionDay = settings?.auction_day ?? 5;
     const startHour = settings?.start_time ? parseInt(settings.start_time.split(':')[0]) : 12;
     const startMinute = settings?.start_time ? parseInt(settings.start_time.split(':')[1]) : 0;
     const endHour = settings?.end_time ? parseInt(settings.end_time.split(':')[0]) : 18;
     const endMinute = settings?.end_time ? parseInt(settings.end_time.split(':')[1]) : 0;
 
-    // Calculate days until next auction day
     let daysUntilAuctionDay = (auctionDay - scheduledStart.getDay() + 7) % 7;
 
-    // If today IS the auction day, check if the window has already passed
     if (daysUntilAuctionDay === 0) {
       const currentHour = scheduledStart.getHours();
       const currentMinute = scheduledStart.getMinutes();
@@ -337,7 +287,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
       const endTimeInMinutes = endHour * 60 + endMinute;
 
       if (currentTimeInMinutes >= endTimeInMinutes) {
-        // Window already passed today, schedule for next week
         daysUntilAuctionDay = 7;
       }
     }
@@ -348,7 +297,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
     scheduledEnd.setDate(scheduledEnd.getDate() + daysUntilAuctionDay);
     scheduledEnd.setHours(endHour, endMinute, 0, 0);
 
-    // Build images array
     let imagesArray: string[] = [];
     if (productData?.product_images) {
       imagesArray = productData.product_images.map((img: any) => img.image_url);
@@ -402,16 +350,11 @@ router.post('/', authenticateToken, async (req: AuthRequest, res) => {
   }
 });
 
-/**
- * GET /api/auctions/my-auctions
- * Get seller's auctions
- */
 router.get('/my-auctions', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const sellerId = req.user!.id;
     const status = req.query.status as string | undefined;
 
-    // Run status transitions so seller sees up-to-date statuses
     await transitionAuctionStatuses();
 
     let query = supabase
@@ -451,10 +394,6 @@ router.get('/my-auctions', authenticateToken, async (req: AuthRequest, res) => {
   }
 });
 
-/**
- * DELETE /api/auctions/:auctionId
- * Cancel/delete an auction (only if no bids)
- */
 router.delete('/:auctionId', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { auctionId } = req.params;
@@ -502,10 +441,6 @@ router.delete('/:auctionId', authenticateToken, async (req: AuthRequest, res) =>
   }
 });
 
-/**
- * PATCH /api/auctions/:auctionId/cancel
- * Cancel an active auction (even with bids - refunds all bidders)
- */
 router.patch('/:auctionId/cancel', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { auctionId } = req.params;
@@ -526,7 +461,6 @@ router.patch('/:auctionId/cancel', authenticateToken, async (req: AuthRequest, r
       });
     }
 
-    // Cancel the auction
     const { error: updateError } = await supabase
       .from('auctions')
       .update({ status: 'cancelled' })
@@ -534,14 +468,11 @@ router.patch('/:auctionId/cancel', authenticateToken, async (req: AuthRequest, r
 
     if (updateError) throw updateError;
 
-    // Cancel all active bids
     await supabase
       .from('bids')
       .update({ status: 'cancelled' })
       .eq('auction_id', auctionId)
       .in('status', ['active', 'winning']);
-
-    // TODO: Notify all bidders that the auction was cancelled
 
     res.json({
       success: true,
@@ -557,10 +488,6 @@ router.patch('/:auctionId/cancel', authenticateToken, async (req: AuthRequest, r
   }
 });
 
-/**
- * PATCH /api/auctions/:auctionId/relist
- * Relist an ended/no_bids auction for the next Friday window
- */
 router.patch('/:auctionId/relist', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { auctionId } = req.params;
@@ -581,7 +508,6 @@ router.patch('/:auctionId/relist', authenticateToken, async (req: AuthRequest, r
       });
     }
 
-    // If 'ended' with bids, don't allow relist (must award first or it should be no_bids)
     if (auction.status === 'ended' && auction.total_bids > 0) {
       return res.status(400).json({
         success: false,
@@ -589,7 +515,6 @@ router.patch('/:auctionId/relist', authenticateToken, async (req: AuthRequest, r
       });
     }
 
-    // Calculate next Friday window
     const { data: settings } = await supabase
       .from('auction_settings')
       .select('*')
@@ -654,10 +579,6 @@ router.patch('/:auctionId/relist', authenticateToken, async (req: AuthRequest, r
   }
 });
 
-/**
- * PATCH /api/auctions/:auctionId/award
- * Award auction to winning bidder
- */
 router.patch('/:auctionId/award', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { auctionId } = req.params;
@@ -678,7 +599,6 @@ router.patch('/:auctionId/award', authenticateToken, async (req: AuthRequest, re
       });
     }
 
-    // Get winning bid
     const { data: winningBid } = await supabase
       .from('bids')
       .select('*')
@@ -693,7 +613,6 @@ router.patch('/:auctionId/award', authenticateToken, async (req: AuthRequest, re
       });
     }
 
-    // Update auction
     const { data: updated, error: updateError } = await supabase
       .from('auctions')
       .update({
@@ -708,14 +627,10 @@ router.patch('/:auctionId/award', authenticateToken, async (req: AuthRequest, re
 
     if (updateError) throw updateError;
 
-    // Update bid status
     await supabase
       .from('bids')
       .update({ status: 'won' })
       .eq('bid_id', winningBid.bid_id);
-
-    // TODO: Send notification to winner
-    // TODO: Create escrow transaction
 
     res.json({
       success: true,
@@ -736,13 +651,8 @@ router.patch('/:auctionId/award', authenticateToken, async (req: AuthRequest, re
 // BUYER ROUTES
 // ============================================================
 
-/**
- * GET /api/auctions
- * Get all active/public auctions
- */
 router.get('/', async (req, res) => {
   try {
-    // Transition statuses before fetching so results are always current
     await transitionAuctionStatuses();
 
     const category = req.query.category as string | undefined;
@@ -776,7 +686,6 @@ router.get('/', async (req, res) => {
       .order('created_at', { ascending: false })
       .range(offset, offset + limitNum - 1);
 
-    // Status filter
     if (status === 'active') {
       query = query.eq('status', 'active');
     } else if (status === 'upcoming') {
@@ -784,33 +693,18 @@ router.get('/', async (req, res) => {
     } else if (status === 'ended') {
       query = query.in('status', ['ended', 'awarded', 'completed']);
     } else {
-      // Default: show both active and scheduled (upcoming) auctions
       query = query.in('status', ['active', 'scheduled']);
     }
 
-    // Category filter
-    if (category) {
-      query = query.eq('category_id', category);
-    }
-
-    // Price filter
-    if (minPrice) {
-      query = query.gte('starting_price', parseFloat(minPrice));
-    }
-    if (maxPrice) {
-      query = query.lte('starting_price', parseFloat(maxPrice));
-    }
-
-    // Search
-    if (search) {
-      query = query.ilike('title', `%${search}%`);
-    }
+    if (category) query = query.eq('category_id', category);
+    if (minPrice) query = query.gte('starting_price', parseFloat(minPrice));
+    if (maxPrice) query = query.lte('starting_price', parseFloat(maxPrice));
+    if (search) query = query.ilike('title', `%${search}%`);
 
     const { data, error, count } = await query;
 
     if (error) throw error;
 
-    // Get auction window status
     const windowStatus = await isAuctionWindowOpen();
 
     res.json({
@@ -834,10 +728,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * GET /api/auctions/window-status
- * Check if auction window is open
- */
 router.get('/window-status', async (req, res) => {
   try {
     const status = await isAuctionWindowOpen();
@@ -853,18 +743,12 @@ router.get('/window-status', async (req, res) => {
   }
 });
 
-/**
- * GET /api/auctions/:auctionId
- * Get single auction with bid history
- */
 router.get('/:auctionId', async (req, res) => {
   try {
     const { auctionId } = req.params;
 
-    // Run transitions so this auction's status is current
     await transitionAuctionStatuses();
 
-    // Fetch auction with seller info
     const { data: auction, error: auctionError } = await supabase
       .from('auctions')
       .select(`
@@ -891,7 +775,6 @@ router.get('/:auctionId', async (req, res) => {
       });
     }
 
-    // Get store info for seller
     if (auction.seller_id) {
       const { data: kycApp } = await supabase
         .from('kyc_applications')
@@ -914,7 +797,6 @@ router.get('/:auctionId', async (req, res) => {
       }
     }
 
-    // Fetch bids
     const { data: bids } = await supabase
       .from('bids')
       .select(`
@@ -928,13 +810,11 @@ router.get('/:auctionId', async (req, res) => {
       .order('bid_amount', { ascending: false })
       .limit(20);
 
-    // Increment view count
     await supabase
       .from('auctions')
       .update({ view_count: (auction.view_count || 0) + 1 })
       .eq('auction_id', auctionId);
 
-    // Get minimum bid
     const minimumBid = await getMinimumBid(auctionId);
 
     res.json({
@@ -955,17 +835,12 @@ router.get('/:auctionId', async (req, res) => {
   }
 });
 
-/**
- * POST /api/auctions/:auctionId/bid
- * Place a bid on an auction
- */
 router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const auctionId = req.params.auctionId as string;
     const bidderId = req.user!.id;
     const { amount, maxAutoBid } = req.body;
 
-    // Check if auction window is open
     const windowStatus = await isAuctionWindowOpen();
     if (!windowStatus.isOpen) {
       return res.status(400).json({
@@ -974,7 +849,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       });
     }
 
-    // Fetch auction — must be active
     const { data: auction, error: auctionError } = await supabase
       .from('auctions')
       .select('*')
@@ -989,7 +863,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       });
     }
 
-    // Cannot bid on own auction
     if (auction.seller_id === bidderId) {
       return res.status(400).json({
         success: false,
@@ -997,7 +870,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       });
     }
 
-    // Check minimum bid
     const minimumBid = await getMinimumBid(auctionId);
     if (amount < minimumBid) {
       return res.status(400).json({
@@ -1006,7 +878,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       });
     }
 
-    // Check buy now — instant win
     if (auction.buy_now_price && amount >= auction.buy_now_price) {
       const { data: bid, error: bidError } = await supabase
         .from('bids')
@@ -1021,7 +892,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
 
       if (bidError) throw bidError;
 
-      // Mark all other active bids as outbid
       await supabase
         .from('bids')
         .update({ status: 'outbid' })
@@ -1029,7 +899,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
         .eq('status', 'active')
         .neq('bid_id', bid.bid_id);
 
-      // Update auction as awarded
       await supabase
         .from('auctions')
         .update({
@@ -1049,7 +918,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       });
     }
 
-    // Mark previous highest bid as outbid
     if (auction.current_bid) {
       await supabase
         .from('bids')
@@ -1059,7 +927,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
         .lt('bid_amount', amount);
     }
 
-    // Place regular bid
     const { data: bid, error: bidError } = await supabase
       .from('bids')
       .insert({
@@ -1078,7 +945,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
       throw bidError;
     }
 
-    // Update auction current_bid and total
     await supabase
       .from('auctions')
       .update({
@@ -1086,9 +952,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
         total_bids: (auction.total_bids || 0) + 1
       })
       .eq('auction_id', auctionId);
-
-    // TODO: Notify previous high bidder they've been outbid
-    // TODO: Add to bidder's watchlist automatically
 
     res.status(201).json({
       success: true,
@@ -1105,10 +968,6 @@ router.post('/:auctionId/bid', authenticateToken, async (req: AuthRequest, res) 
   }
 });
 
-/**
- * GET /api/auctions/user/my-bids
- * Get user's bidding history
- */
 router.get('/user/my-bids', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.id;
@@ -1146,10 +1005,6 @@ router.get('/user/my-bids', authenticateToken, async (req: AuthRequest, res) => 
   }
 });
 
-/**
- * POST /api/auctions/:auctionId/watch
- * Add auction to watchlist
- */
 router.post('/:auctionId/watch', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { auctionId } = req.params;
@@ -1182,10 +1037,6 @@ router.post('/:auctionId/watch', authenticateToken, async (req: AuthRequest, res
   }
 });
 
-/**
- * GET /api/auctions/user/watchlist
- * Get user's auction watchlist with full auction details
- */
 router.get('/user/watchlist', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.id;
@@ -1234,10 +1085,6 @@ router.get('/user/watchlist', authenticateToken, async (req: AuthRequest, res) =
   }
 });
 
-/**
- * DELETE /api/auctions/:auctionId/unwatch
- * Remove auction from watchlist
- */
 router.delete('/:auctionId/unwatch', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { auctionId } = req.params;
@@ -1265,10 +1112,6 @@ router.delete('/:auctionId/unwatch', authenticateToken, async (req: AuthRequest,
   }
 });
 
-/**
- * GET /api/auctions/user/watchlist/ids
- * Get list of auction IDs in user's watchlist (for quick checking)
- */
 router.get('/user/watchlist/ids', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.id;
@@ -1296,10 +1139,6 @@ router.get('/user/watchlist/ids', authenticateToken, async (req: AuthRequest, re
   }
 });
 
-/**
- * GET /api/auctions/user/watchlist/check/:auctionId
- * Check if auction is in user's watchlist
- */
 router.get('/user/watchlist/check/:auctionId', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.id;
@@ -1329,5 +1168,125 @@ router.get('/user/watchlist/check/:auctionId', authenticateToken, async (req: Au
     });
   }
 });
+
+// ============================================================
+// ADD AUCTION WIN TO CART
+// ============================================================
+
+/**
+ * POST /api/auctions/:auctionId/add-to-cart
+ * Winner adds their auction item to cart for normal checkout
+ */
+router.post(
+  '/:auctionId/add-to-cart',
+  authenticateToken,
+  async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { auctionId } = req.params;
+
+      // 1. Fetch auction
+      const { data: auction, error: auctionError } = await supabase
+        .from('auctions')
+        .select('*')
+        .eq('auction_id', auctionId)
+        .single();
+
+      if (auctionError || !auction) {
+        return res.status(404).json({
+          success: false,
+          message: 'Auction not found',
+        });
+      }
+
+      // 2. Only the winner can add to cart
+      if (auction.winner_id !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not the winner of this auction',
+        });
+      }
+
+      // 3. Auction must be ended or awarded
+      if (!['awarded', 'ended'].includes(auction.status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'This auction is not ready for checkout',
+        });
+      }
+
+      // 4. Check if already in cart
+      const { data: existing } = await supabase
+        .from('cart_items')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('auction_id', auctionId)
+        .maybeSingle();
+
+      if (existing) {
+        return res.json({
+          success: true,
+          message: 'Auction item already in cart',
+          data: { alreadyInCart: true },
+        });
+      }
+
+      // 5. Check if already paid
+      const { data: existingOrder } = await supabase
+        .from('orders')
+        .select('order_id, payment_status')
+        .eq('auction_id', auctionId)
+        .eq('buyer_id', userId)
+        .eq('payment_status', 'paid')
+        .maybeSingle();
+
+      if (existingOrder) {
+        return res.status(400).json({
+          success: false,
+          message: "You've already paid for this auction",
+        });
+      }
+
+      // 6. Add to cart with winning bid as override_price
+      const winningBid = auction.winning_bid || auction.current_bid || auction.starting_price;
+
+      const { data: cartItem, error: cartError } = await supabase
+        .from('cart_items')
+        .insert({
+          user_id: userId,
+          product_id: auction.product_id,
+          quantity: 1,
+          auction_id: auctionId,
+          override_price: winningBid,
+        })
+        .select()
+        .single();
+
+      if (cartError) throw cartError;
+
+      // Get updated cart count
+      const { count } = await supabase
+        .from('cart_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      res.status(201).json({
+        success: true,
+        message: 'Auction item added to cart',
+        data: {
+          cartItem,
+          cartCount: count || 0,
+          winningBid,
+        },
+      });
+    } catch (error: any) {
+      console.error('Add auction to cart error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to add auction item to cart',
+      });
+    }
+  }
+);
 
 export default router;

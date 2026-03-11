@@ -545,7 +545,7 @@ router.patch("/:orderId", authenticateToken, async (req: AuthRequest, res: Respo
         });
 
         await supabase.from("escrow_transactions")
-          .update({ status: "escrow_held", paid_at: new Date().toISOString(), paystack_reference: paymentReference })
+          .update({ status: "escrow_held", paid_at: new Date().toISOString(), payment_reference: paymentReference })
           .eq("order_id", orderId).eq("status", "pending");
 
         // Track in seller wallet display

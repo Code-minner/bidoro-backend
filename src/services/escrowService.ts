@@ -10,12 +10,16 @@
 // The 8.2% comes from src/config/pricing.ts — one
 // place to change it.
 //
-// This is the SINGLE source of truth for all escrow
-// operations. orders.ts and checkout.ts delegate here.
+// FINCRA CHANGE:
+//   - Import fincraService instead of paystackService
+//   - releaseFundsToSeller: no paystack_recipient_code check.
+//     Fincra transfers go directly to bank account details.
+//   - DB column "paystack_reference" is reused for the Fincra
+//     checkout reference (rename in a later migration if desired).
 // ================================================
 
 import { createClient } from "@supabase/supabase-js";
-import { paystackService } from "./paystackService";
+import { fincraService } from "./fincraService";
 import {
   calculateEscrowSplit,
   PLATFORM_FEE_PERCENT,
@@ -44,27 +48,13 @@ const toKobo = (naira: number): number => Math.round(naira * 100);
 // ================================================
 
 interface CreateEscrowParams {
-  buyerId: string;
-  sellerId: string;
+  buyerId:    string;
+  sellerId:   string;
   productId?: string;
-  orderId: string;
-  amount: number;       // Full order total (what buyer paid)
+  orderId:    string;
+  amount:     number; // Full order total (what buyer paid)
   buyerEmail: string;
 }
-
-/**
- * Escrow Statuses (match DB constraint):
- *   pending        -> payment initialized
- *   escrow_held    -> payment confirmed, funds held
- *   shipped        -> seller shipped item
- *   delivered      -> buyer confirmed delivery
- *   released       -> funds transferred to seller
- *   disputed       -> buyer opened dispute
- *   cancelled      -> order cancelled
- *   payout_failed  -> transfer to seller failed
- *   pending_payout -> seller has no bank account
- *   refunded       -> refund processed
- */
 
 // ================================================
 // MAIN SERVICE
@@ -73,7 +63,6 @@ interface CreateEscrowParams {
 export const escrowService = {
   // ================================================
   // CREATE ESCROW RECORD
-  // The 8.2% split is calculated here using pricing.ts.
   // ================================================
   async createEscrowForOrder({
     buyerId,
@@ -84,8 +73,6 @@ export const escrowService = {
     buyerEmail,
   }: CreateEscrowParams) {
     const reference = generateReference("ESC");
-
-    // Calculate the split using the single source of truth
     const split = calculateEscrowSplit(amount);
 
     const autoReleaseAt = new Date();
@@ -94,17 +81,17 @@ export const escrowService = {
     const { data: escrow, error: dbError } = await supabase
       .from("escrow_transactions")
       .insert({
-        order_id: orderId,
-        buyer_id: buyerId,
-        seller_id: sellerId,
-        product_id: productId || null,
-        amount: split.totalAmount,
-        platform_fee: split.platformFee,
-        seller_amount: split.sellerAmount,
-        fee_percent: split.feePercent,
-        paystack_reference: reference,
-        status: "pending",
-        auto_release_at: autoReleaseAt.toISOString(),
+        order_id:           orderId,
+        buyer_id:           buyerId,
+        seller_id:          sellerId,
+        product_id:         productId || null,
+        amount:             split.totalAmount,
+        platform_fee:       split.platformFee,
+        seller_amount:      split.sellerAmount,
+        fee_percent:        split.feePercent,
+        paystack_reference: reference, // column reused for Fincra reference
+        status:             "pending",
+        auto_release_at:    autoReleaseAt.toISOString(),
       })
       .select()
       .single();
@@ -117,7 +104,7 @@ export const escrowService = {
     return {
       success: true,
       data: {
-        escrowId: escrow.id,
+        escrowId:     escrow.id,
         reference,
         split,
         autoReleaseAt: autoReleaseAt.toISOString(),
@@ -127,7 +114,7 @@ export const escrowService = {
 
   // ================================================
   // INITIALIZE PAYMENT (standalone flow)
-  // Creates escrow + initializes Paystack
+  // Creates escrow + opens Fincra checkout
   // ================================================
   async createEscrowPayment({
     buyerId,
@@ -150,18 +137,18 @@ export const escrowService = {
 
     const { escrowId, reference, split } = escrowResult.data!;
 
-    const paymentResult = await paystackService.initializeTransaction({
-      email: buyerEmail,
-      amount: split.totalAmount,
+    const paymentResult = await fincraService.initializeTransaction({
+      email:       buyerEmail,
+      amount:      split.totalAmount, // Naira — fincraService does NOT convert
       reference,
       callbackUrl: `${process.env.FRONTEND_URL}/payment/verify`,
       metadata: {
-        escrow_id: escrowId,
-        order_id: orderId,
-        buyer_id: buyerId,
-        seller_id: sellerId,
+        escrow_id:  escrowId,
+        order_id:   orderId,
+        buyer_id:   buyerId,
+        seller_id:  sellerId,
         product_id: productId,
-        type: "escrow_payment",
+        type:       "escrow_payment",
       },
     });
 
@@ -176,7 +163,7 @@ export const escrowService = {
         escrowId,
         reference,
         authorizationUrl: paymentResult.data.authorization_url,
-        accessCode: paymentResult.data.access_code,
+        accessCode:       paymentResult.data.access_code,
         split,
       },
     };
@@ -184,16 +171,15 @@ export const escrowService = {
 
   // ================================================
   // HANDLE PAYMENT SUCCESS
-  // Updates BOTH escrow_transactions AND orders
   // ================================================
-  async handlePaymentSuccess(reference: string, paystackData: any) {
+  async handlePaymentSuccess(reference: string, fincraData: any) {
     const { data: escrow, error } = await supabase
       .from("escrow_transactions")
       .update({
-        status: "escrow_held",
+        status:  "escrow_held",
         paid_at: new Date().toISOString(),
       })
-      .eq("paystack_reference", reference)
+      .eq("paystack_reference", reference) // column still named paystack_reference in DB
       .select()
       .single();
 
@@ -202,21 +188,16 @@ export const escrowService = {
       return { success: false, error: "Failed to update escrow" };
     }
 
-    // SYNC: Update the linked order
-    const { error: orderError } = await supabase
+    await supabase
       .from("orders")
       .update({
-        status: "confirmed",
-        payment_status: "paid",
+        status:            "confirmed",
+        payment_status:    "paid",
         payment_reference: reference,
-        escrow_amount: escrow.amount,
-        updated_at: new Date().toISOString(),
+        escrow_amount:     escrow.amount,
+        updated_at:        new Date().toISOString(),
       })
       .eq("order_id", escrow.order_id);
-
-    if (orderError) {
-      console.error("Update order error:", orderError);
-    }
 
     return { success: true, data: escrow };
   },
@@ -253,7 +234,6 @@ export const escrowService = {
 
     if (error) return { success: false, error: "Failed to update status" };
 
-    // SYNC: Update order
     const orderUpdate: any = { status: "shipped", updated_at: new Date().toISOString() };
     if (trackingInfo) orderUpdate.tracking_number = trackingInfo.trackingNumber;
 
@@ -289,27 +269,22 @@ export const escrowService = {
     await supabase
       .from("orders")
       .update({
-        status: "delivered",
-        delivered_at: new Date().toISOString(),
-        actual_delivery: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        status:           "delivered",
+        delivered_at:     new Date().toISOString(),
+        actual_delivery:  new Date().toISOString(),
+        updated_at:       new Date().toISOString(),
       })
       .eq("order_id", escrow.order_id);
 
-    // Trigger payout
     return await this.releaseFundsToSeller(escrowId);
   },
 
   // ================================================
   // RELEASE FUNDS TO SELLER
   //
-  // This is the CRITICAL payout point:
-  //   1. Seller gets 91.8% (order total minus 8.2%)
-  //   2. Initiates Paystack transfer for seller_amount
-  //   3. Updates escrow_transactions
-  //   4. Updates orders
-  //   5. Credits seller_wallets
-  //   6. Creates wallet_transaction record
+  // FINCRA CHANGE: no longer checks paystack_recipient_code.
+  // We pass bank account details directly to fincraService.initiateTransfer.
+  // The seller just needs account_number + bank_code in seller_bank_accounts.
   // ================================================
   async releaseFundsToSeller(escrowId: string) {
     const { data: escrow, error: fetchError } = await supabase
@@ -322,15 +297,17 @@ export const escrowService = {
       return { success: false, error: "Escrow not found" };
     }
 
-    // Get seller's bank account
+    // Get seller's primary bank account
     const { data: bankAccount } = await supabase
       .from("seller_bank_accounts")
       .select("*")
       .eq("user_id", escrow.seller_id)
       .eq("is_primary", true)
+      .eq("status", "active")
       .single();
 
-    if (!bankAccount?.paystack_recipient_code) {
+    // For Fincra we need account_number and bank_code — no recipient code required
+    if (!bankAccount?.account_number || !bankAccount?.bank_code) {
       await supabase
         .from("escrow_transactions")
         .update({ status: "pending_payout" })
@@ -344,12 +321,15 @@ export const escrowService = {
 
     const payoutReference = generateReference("PAY");
 
-    // ---- STEP 1: Paystack transfer (seller_amount = 91.8% of total) ----
-    const transferResult = await paystackService.initiateTransfer({
-      amount: escrow.seller_amount,
-      recipientCode: bankAccount.paystack_recipient_code,
-      reference: payoutReference,
-      reason: `Bidoro Order Payout - ${escrow.order_id}`,
+    // ---- STEP 1: Fincra disbursement (seller_amount = 91.8% of total) ----
+    const transferResult = await fincraService.initiateTransfer({
+      amount:        escrow.seller_amount, // Naira — no conversion in fincraService
+      recipientCode: "",                   // not used by Fincra
+      reference:     payoutReference,
+      reason:        `Bidoro Order Payout - ${escrow.order_id}`,
+      accountNumber: bankAccount.account_number,
+      bankCode:      bankAccount.bank_code,
+      accountName:   bankAccount.account_name,
     });
 
     if (!transferResult.success) {
@@ -365,9 +345,9 @@ export const escrowService = {
     const { data: updated } = await supabase
       .from("escrow_transactions")
       .update({
-        status: "released",
-        paystack_transfer_code: transferResult.data.transfer_code,
-        released_at: new Date().toISOString(),
+        status:                 "released",
+        paystack_transfer_code: transferResult.data.transfer_code, // column reused
+        released_at:            new Date().toISOString(),
       })
       .eq("id", escrowId)
       .select()
@@ -377,10 +357,10 @@ export const escrowService = {
     await supabase
       .from("orders")
       .update({
-        status: "completed",
+        status:         "completed",
         payment_status: "released",
-        escrow_amount: 0,
-        updated_at: new Date().toISOString(),
+        escrow_amount:  0,
+        updated_at:     new Date().toISOString(),
       })
       .eq("order_id", escrow.order_id);
 
@@ -397,13 +377,13 @@ export const escrowService = {
   },
 
   // ================================================
-  // CREDIT SELLER WALLET
+  // CREDIT SELLER WALLET  (unchanged)
   // ================================================
   async creditSellerWallet(
-    sellerId: string,
-    amount: number,
-    orderId: string,
-    escrowId: string,
+    sellerId:  string,
+    amount:    number,
+    orderId:   string,
+    escrowId:  string,
     reference: string
   ) {
     try {
@@ -433,31 +413,31 @@ export const escrowService = {
       }
 
       const newAvailableBalance = (wallet.available_balance || 0) + amountInKobo;
-      const newTotalEarned = (wallet.total_earned || 0) + amountInKobo;
-      const newEscrowBalance = Math.max(0, (wallet.escrow_balance || 0) - amountInKobo);
+      const newTotalEarned      = (wallet.total_earned      || 0) + amountInKobo;
+      const newEscrowBalance    = Math.max(0, (wallet.escrow_balance || 0) - amountInKobo);
 
       await supabase
         .from("seller_wallets")
         .update({
           available_balance: newAvailableBalance,
-          total_earned: newTotalEarned,
-          escrow_balance: newEscrowBalance,
-          updated_at: new Date().toISOString(),
+          total_earned:      newTotalEarned,
+          escrow_balance:    newEscrowBalance,
+          updated_at:        new Date().toISOString(),
         })
         .eq("wallet_id", wallet.wallet_id);
 
       await supabase.from("wallet_transactions").insert({
-        wallet_id: wallet.wallet_id,
-        user_id: sellerId,
-        type: "escrow_release",
-        amount: amountInKobo,
-        direction: "credit",
+        wallet_id:     wallet.wallet_id,
+        user_id:       sellerId,
+        type:          "escrow_release",
+        amount:        amountInKobo,
+        direction:     "credit",
         balance_after: newAvailableBalance,
         reference,
-        order_id: orderId,
-        escrow_id: escrowId,
-        status: "completed",
-        description: `Escrow released for order ${orderId}`,
+        order_id:      orderId,
+        escrow_id:     escrowId,
+        status:        "completed",
+        description:   `Escrow released for order ${orderId}`,
       });
 
       console.log(`Wallet credited for seller ${sellerId}: NGN ${amount} (order: ${orderId})`);
@@ -467,7 +447,7 @@ export const escrowService = {
   },
 
   // ================================================
-  // HOLD ESCROW IN WALLET (display purposes)
+  // HOLD ESCROW IN WALLET (unchanged)
   // ================================================
   async holdEscrowInWallet(sellerId: string, amount: number) {
     try {
@@ -493,7 +473,7 @@ export const escrowService = {
           .from("seller_wallets")
           .update({
             escrow_balance: (wallet.escrow_balance || 0) + amountInKobo,
-            updated_at: new Date().toISOString(),
+            updated_at:     new Date().toISOString(),
           })
           .eq("wallet_id", wallet.wallet_id);
       }
@@ -503,7 +483,7 @@ export const escrowService = {
   },
 
   // ================================================
-  // OPEN DISPUTE
+  // OPEN DISPUTE (unchanged)
   // ================================================
   async openDispute(escrowId: string, buyerId: string, reason: string) {
     const { data: escrow, error: fetchError } = await supabase
@@ -524,10 +504,10 @@ export const escrowService = {
     const { data: updated, error } = await supabase
       .from("escrow_transactions")
       .update({
-        status: "disputed",
-        dispute_reason: reason,
-        dispute_opened_at: new Date().toISOString(),
-        auto_release_at: null,
+        status:             "disputed",
+        dispute_reason:     reason,
+        dispute_opened_at:  new Date().toISOString(),
+        auto_release_at:    null,
       })
       .eq("id", escrowId)
       .select()
@@ -544,13 +524,13 @@ export const escrowService = {
   },
 
   // ================================================
-  // RESOLVE DISPUTE (admin only)
+  // RESOLVE DISPUTE (admin only, unchanged)
   // ================================================
   async resolveDispute(
-    escrowId: string,
-    adminId: string,
-    resolution: string,
-    outcome: "release_to_seller" | "refund_buyer" | "partial_refund",
+    escrowId:     string,
+    adminId:      string,
+    resolution:   string,
+    outcome:      "release_to_seller" | "refund_buyer" | "partial_refund",
     partialAmount?: number
   ) {
     const { data: escrow, error: fetchError } = await supabase
@@ -566,23 +546,21 @@ export const escrowService = {
     let newOrderStatus: string;
 
     switch (outcome) {
-      case "release_to_seller":
+      case "release_to_seller": {
         const releaseResult = await this.releaseFundsToSeller(escrowId);
         if (!releaseResult.success) return releaseResult;
         newEscrowStatus = "released";
-        newOrderStatus = "completed";
+        newOrderStatus  = "completed";
         break;
-
+      }
       case "refund_buyer":
         newEscrowStatus = "refunded";
-        newOrderStatus = "cancelled";
+        newOrderStatus  = "cancelled";
         break;
-
       case "partial_refund":
         newEscrowStatus = "released";
-        newOrderStatus = "completed";
+        newOrderStatus  = "completed";
         break;
-
       default:
         return { success: false, error: "Invalid outcome" };
     }
@@ -590,10 +568,10 @@ export const escrowService = {
     await supabase
       .from("escrow_transactions")
       .update({
-        status: newEscrowStatus,
-        dispute_resolved_at: new Date().toISOString(),
-        dispute_resolution: resolution,
-        dispute_resolved_by: adminId,
+        status:               newEscrowStatus,
+        dispute_resolved_at:  new Date().toISOString(),
+        dispute_resolution:   resolution,
+        dispute_resolved_by:  adminId,
       })
       .eq("id", escrowId);
 
@@ -606,7 +584,7 @@ export const escrowService = {
   },
 
   // ================================================
-  // CRON: AUTO-RELEASE
+  // CRON: AUTO-RELEASE (unchanged)
   // ================================================
   async processAutoReleases() {
     const now = new Date().toISOString();
@@ -621,7 +599,6 @@ export const escrowService = {
     if (error || !escrows?.length) return { processed: 0 };
 
     let processed = 0;
-
     for (const escrow of escrows) {
       const result = await this.releaseFundsToSeller(escrow.id);
       if (result.success) {
@@ -636,7 +613,7 @@ export const escrowService = {
   },
 
   // ================================================
-  // CRON: RECONCILE ORDERS WITHOUT ESCROW RECORDS
+  // CRON: RECONCILE (unchanged)
   // ================================================
   async reconcileMissingEscrows() {
     const { data: orphanedOrders, error } = await supabase
@@ -659,22 +636,21 @@ export const escrowService = {
 
       if (!existingEscrow) {
         const split = calculateEscrowSplit(Number(order.total_amount));
-
         const autoReleaseAt = new Date();
         autoReleaseAt.setDate(autoReleaseAt.getDate() + AUTO_RELEASE_DAYS);
 
         await supabase.from("escrow_transactions").insert({
-          order_id: order.order_id,
-          buyer_id: order.buyer_id,
-          seller_id: order.seller_id,
-          amount: split.totalAmount,
-          platform_fee: split.platformFee,
-          seller_amount: split.sellerAmount,
-          fee_percent: split.feePercent,
+          order_id:           order.order_id,
+          buyer_id:           order.buyer_id,
+          seller_id:          order.seller_id,
+          amount:             split.totalAmount,
+          platform_fee:       split.platformFee,
+          seller_amount:      split.sellerAmount,
+          fee_percent:        split.feePercent,
           paystack_reference: order.payment_reference,
-          status: "escrow_held",
-          paid_at: order.updated_at,
-          auto_release_at: autoReleaseAt.toISOString(),
+          status:             "escrow_held",
+          paid_at:            order.updated_at,
+          auto_release_at:    autoReleaseAt.toISOString(),
         });
 
         reconciled++;
@@ -686,7 +662,7 @@ export const escrowService = {
   },
 
   // ================================================
-  // GETTERS
+  // GETTERS (unchanged)
   // ================================================
   async getEscrowById(escrowId: string, userId: string) {
     const { data, error } = await supabase
@@ -718,7 +694,7 @@ export const escrowService = {
 
   async getUserEscrows(
     userId: string,
-    role: "buyer" | "seller" | "both" = "both",
+    role:   "buyer" | "seller" | "both" = "both",
     status?: string
   ) {
     let query = supabase
@@ -731,9 +707,9 @@ export const escrowService = {
       `)
       .order("created_at", { ascending: false });
 
-    if (role === "buyer") query = query.eq("buyer_id", userId);
+    if (role === "buyer")       query = query.eq("buyer_id", userId);
     else if (role === "seller") query = query.eq("seller_id", userId);
-    else query = query.or(`buyer_id.eq.${userId},seller_id.eq.${userId}`);
+    else                        query = query.or(`buyer_id.eq.${userId},seller_id.eq.${userId}`);
 
     if (status) query = query.eq("status", status);
 
@@ -743,6 +719,5 @@ export const escrowService = {
   },
 };
 
-// Re-export for escrow routes
 export { calculateEscrowSplit as calculateFees };
 export default escrowService;
