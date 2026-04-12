@@ -1,5 +1,4 @@
 // backend/services/dojahService.ts
-
 const DOJAH_BASE_URL = "https://sandbox.dojah.io"; // Switch to https://api.dojah.io in production
 
 interface NINVerificationResult {
@@ -12,19 +11,20 @@ interface NINVerificationResult {
   photo?: string;
 }
 
+// ✅ Fixed: field names now match what Dojah actually returns
 interface DojahNINEntity {
-  firstname: string;
-  surname: string;
-  middlename?: string;
-  birthdate?: string;
+  first_name: string;
+  last_name: string;
+  middle_name?: string;
+  date_of_birth?: string;
   gender?: string;
-  phone?: string;
+  phone_number?: string;
   photo?: string;
   nin?: string;
 }
 
 interface DojahNINResponse {
-  entity?: DojahNINEntity; // ✅ Optional — error responses won't have this
+  entity?: DojahNINEntity;
   error?: string;
   message?: string;
 }
@@ -89,13 +89,14 @@ class DojahService {
 
     const entity: DojahNINEntity = data.entity;
 
+    // ✅ Fixed: mapping correct field names from Dojah response
     return {
-      firstName: entity.firstname,
-      lastName: entity.surname,
-      middleName: entity.middlename,
-      dateOfBirth: entity.birthdate,
+      firstName: entity.first_name,
+      lastName: entity.last_name,
+      middleName: entity.middle_name,
+      dateOfBirth: entity.date_of_birth,
       gender: entity.gender,
-      phone: entity.phone,
+      phone: entity.phone_number,
       photo: entity.photo,
     };
   }
@@ -139,13 +140,14 @@ class DojahService {
 
     const entity: DojahNINEntity = data.entity;
 
+    // ✅ Fixed: mapping correct field names from Dojah response
     return {
-      firstName: entity.firstname,
-      lastName: entity.surname,
-      middleName: entity.middlename,
-      dateOfBirth: entity.birthdate,
+      firstName: entity.first_name,
+      lastName: entity.last_name,
+      middleName: entity.middle_name,
+      dateOfBirth: entity.date_of_birth,
       gender: entity.gender,
-      phone: entity.phone,
+      phone: entity.phone_number,
       photo: entity.photo,
     };
   }
