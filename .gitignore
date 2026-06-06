@@ -5,3 +5,4 @@ build/
 .env.local
 .env.*.local
 *.log
+google-vision-key.json.json
