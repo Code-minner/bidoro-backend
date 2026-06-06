@@ -27,6 +27,10 @@ jobs:
           path: ./
           extra_args: --only-verified
 
+      - name: TruffleHog detailed output
+        run: |
+          trufflehog filesystem . --only-verified --json
+
       # Scan the current diff/working tree with gitleaks
       - name: Install gitleaks
         run: |

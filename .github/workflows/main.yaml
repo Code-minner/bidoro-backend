@@ -1,10 +1,10 @@
-name: Main CI/CD Pipeline
+name: Build, Test & Deploy
 
 on:
   pull_request:
     branches:
       - main
-    types:
+    types:  
       - closed
   workflow_dispatch:
 
@@ -31,6 +31,10 @@ jobs:
         with:
           path: ./
           extra_args: --only-verified
+      
+      - name: TruffleHog detailed output
+        run: |
+          trufflehog filesystem . --only-verified --json
 
       - name: Install gitleaks
         run: |
