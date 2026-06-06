@@ -1,12 +1,16 @@
 name: Main CI/CD Pipeline
 
+# on:
+#   pull_request:
+#     branches:
+#       - main
+#     types:  
+#       - closed
+#   workflow_dispatch:
+
 on:
-  pull_request:
-    branches:
-      - main
-    types:
-      - closed
-  workflow_dispatch:
+    push:
+      branches: [main]
 
 env:
   NODE_VERSION: "20"
@@ -31,6 +35,10 @@ jobs:
         with:
           path: ./
           extra_args: --only-verified
+      
+      - name: TruffleHog detailed output
+        run: |
+          trufflehog filesystem . --only-verified --json
 
       - name: Install gitleaks
         run: |
