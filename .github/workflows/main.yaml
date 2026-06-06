@@ -1,16 +1,12 @@
 name: Build, Test & Deploy
 
-# on:
-#   pull_request:
-#     branches:
-#       - main
-#     types:  
-#       - closed
-#   workflow_dispatch:
-
 on:
-    push:
-      branches: [main]
+  pull_request:
+    branches:
+      - main
+    types:  
+      - closed
+  workflow_dispatch:
 
 env:
   NODE_VERSION: "20"
