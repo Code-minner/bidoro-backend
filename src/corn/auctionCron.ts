@@ -13,9 +13,6 @@ import { supabaseAdmin as supabase } from '../config/supabase';
  * - Reschedules auctions that missed their window to next Friday
  */
 
-// ============================================================
-// HELPER FUNCTIONS
-// ============================================================
 
 /**
  * Get the next Friday at a specific time
